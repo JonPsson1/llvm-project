@@ -2868,6 +2868,7 @@ bool RAGreedy::hasVirtRegAlloc() {
   return false;
 }
 
+
 bool RAGreedy::run(MachineFunction &mf) {
   LLVM_DEBUG(dbgs() << "********** GREEDY REGISTER ALLOCATION **********\n"
                     << "********** Function: " << mf.getName() << '\n');

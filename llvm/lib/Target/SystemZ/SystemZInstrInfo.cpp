@@ -2123,6 +2123,217 @@ unsigned SystemZInstrInfo::getFusedCompare(unsigned Opcode,
   return 0;
 }
 
+bool SystemZInstrInfo::isLoadAndTestAsCmp(const MachineInstr &MI) const {
+  // If we during isel used a load-and-test as a compare with 0, the
+  // def operand is dead.
+  return (MI.getOpcode() == SystemZ::LTEBR ||
+          MI.getOpcode() == SystemZ::LTDBR ||
+          MI.getOpcode() == SystemZ::LTXBR) &&
+    MI.getOperand(0).isDead();
+}
+
+bool SystemZInstrInfo::isCompareZero(const MachineInstr &Compare) const {
+  if (isLoadAndTestAsCmp(Compare))
+    return true;
+  return Compare.isCompare() && Compare.getNumExplicitOperands() == 2 &&
+    Compare.getOperand(1).isImm() && Compare.getOperand(1).getImm() == 0;
+}
+
+unsigned SystemZInstrInfo::
+getCompareSourceReg(const MachineInstr &Compare) const {
+  unsigned reg = 0;
+  if (Compare.isCompare())
+    reg = Compare.getOperand(0).getReg();
+  else if (isLoadAndTestAsCmp(Compare))
+    reg = Compare.getOperand(1).getReg();
+  assert(reg);
+
+  return reg;
+}
+
+#ifndef NDEBUG
+static bool isAddWithImmediate(unsigned Opcode) {
+  switch(Opcode) {
+  case SystemZ::AHIMux:
+  case SystemZ::AHIMuxK:
+  case SystemZ::AHI:
+  case SystemZ::AHIK:
+  case SystemZ::AGHI:
+  case SystemZ::AGHIK:
+  case SystemZ::AFIMux:
+  case SystemZ::AFI:
+  case SystemZ::AIH:
+  case SystemZ::AGFI:
+    return true;
+  default: break;
+  }
+  return false;
+}
+#endif
+
+// The CC users in CCUsers are testing the result of a comparison of some
+// value X against zero and we know that any CC value produced by MI would
+// also reflect the value of X.  ConvOpc may be used to pass the transfomed
+// opcode MI will have if this succeeds.  Try to adjust CCUsers so that they
+// test the result of MI directly, returning true on success.  Leave
+// everything unchanged on failure.
+bool SystemZInstrInfo::
+adjustCCMasksForInstr(MachineInstr &MI, MachineInstr &Compare,
+                      SmallVectorImpl<MachineInstr *> &CCUsers,
+                      unsigned ConvOpc, bool DoAdjust) const {
+  unsigned CompareFlags = Compare.getDesc().TSFlags;
+  unsigned CompareCCValues = SystemZII::getCCValues(CompareFlags);
+  int Opcode = (ConvOpc ? ConvOpc : MI.getOpcode());
+  const MCInstrDesc &Desc = get(Opcode);
+  unsigned MIFlags = Desc.TSFlags;
+
+  // If Compare may raise an FP exception, we can only eliminate it
+  // if MI itself would have already raised the exception.
+  if (Compare.mayRaiseFPException()) {
+    // If the caller will change MI to use ConvOpc, only test whether
+    // ConvOpc is suitable; it is on the caller to set the MI flag.
+    if (ConvOpc && !Desc.mayRaiseFPException())
+      return false;
+    // If the caller will not change MI, we test the MI flag here.
+    if (!ConvOpc && !MI.mayRaiseFPException())
+      return false;
+  }
+
+  // See which compare-style condition codes are available.
+  unsigned CCValues = SystemZII::getCCValues(MIFlags);
+  unsigned ReusableCCMask = CCValues;
+  // For unsigned comparisons with zero, only equality makes sense.
+  if (CompareFlags & SystemZII::IsLogical)
+    ReusableCCMask &= SystemZ::CCMASK_CMP_EQ;
+  unsigned OFImplies = 0;
+  bool LogicalMI = false;
+  bool MIEquivalentToCmp = false;
+  if (MI.getFlag(MachineInstr::NoSWrap) &&
+      (MIFlags & SystemZII::CCIfNoSignedWrap)) {
+    // If MI has the NSW flag set in combination with the
+    // SystemZII::CCIfNoSignedWrap flag, all CCValues are valid.
+  }
+  else if ((MIFlags & SystemZII::CCIfNoSignedWrap) &&
+           MI.getOperand(2).isImm()) {
+    // Signed addition of immediate. If adding a positive immediate
+    // overflows, the result must be less than zero. If adding a negative
+    // immediate overflows, the result must be larger than zero (except in
+    // the special case of adding the minimum value of the result range, in
+    // which case we cannot predict whether the result is larger than or
+    // equal to zero).
+    assert(isAddWithImmediate(Opcode) && "Expected an add with immediate.");
+    assert(!MI.mayLoadOrStore() && "Expected an immediate term.");
+    int64_t RHS = MI.getOperand(2).getImm();
+    if (SystemZ::GRX32BitRegClass.contains(MI.getOperand(0).getReg()) &&
+        RHS == INT32_MIN)
+      return false;
+    OFImplies = (RHS > 0 ? SystemZ::CCMASK_CMP_LT : SystemZ::CCMASK_CMP_GT);
+  }
+  else if ((MIFlags & SystemZII::IsLogical) && CCValues) {
+    // Use CCMASK_CMP_EQ to match with CCUsers. On success CCMask:s will be
+    // converted to CCMASK_LOGICAL_ZERO or CCMASK_LOGICAL_NONZERO.
+    LogicalMI = true;
+    ReusableCCMask = SystemZ::CCMASK_CMP_EQ;
+  }
+  else {
+    ReusableCCMask &= SystemZII::getCompareZeroCCMask(MIFlags);
+    assert((ReusableCCMask & ~CCValues) == 0 && "Invalid CCValues");
+    MIEquivalentToCmp =
+      ReusableCCMask == CCValues && CCValues == CompareCCValues;
+  }
+  if (ReusableCCMask == 0)
+    return false;
+
+  if (!MIEquivalentToCmp) {
+    // Now check whether these flags are enough for all users.
+    SmallVector<MachineOperand *, 4> AlterMasks;
+    for (MachineInstr *CCUserMI : CCUsers) {
+      // Fail if this isn't a use of CC that we understand.
+      unsigned Flags = CCUserMI->getDesc().TSFlags;
+      unsigned FirstOpNum;
+      if (Flags & SystemZII::CCMaskFirst)
+        FirstOpNum = 0;
+      else if (Flags & SystemZII::CCMaskLast)
+        FirstOpNum = CCUserMI->getNumExplicitOperands() - 2;
+      else
+        return false;
+
+      // Check whether the instruction predicate treats all CC values
+      // outside of ReusableCCMask in the same way.  In that case it
+      // doesn't matter what those CC values mean.
+      unsigned CCValid = CCUserMI->getOperand(FirstOpNum).getImm();
+      unsigned CCMask = CCUserMI->getOperand(FirstOpNum + 1).getImm();
+      assert(CCValid == CompareCCValues && (CCMask & ~CCValid) == 0 &&
+             "Corrupt CC operands of CCUser.");
+      unsigned OutValid = ~ReusableCCMask & CCValid;
+      unsigned OutMask = ~ReusableCCMask & CCMask;
+      if (OutMask != 0 && OutMask != OutValid)
+        return false;
+
+      AlterMasks.push_back(&CCUserMI->getOperand(FirstOpNum));
+      AlterMasks.push_back(&CCUserMI->getOperand(FirstOpNum + 1));
+    }
+
+    if (!DoAdjust)
+      return true;
+
+    // All users are OK.  Adjust the masks for MI.
+    for (unsigned I = 0, E = AlterMasks.size(); I != E; I += 2) {
+      AlterMasks[I]->setImm(CCValues);
+      unsigned CCMask = AlterMasks[I + 1]->getImm();
+      if (LogicalMI) {
+        // Translate the CCMask into its "logical" value.
+        CCMask = (CCMask == SystemZ::CCMASK_CMP_EQ ?
+                  SystemZ::CCMASK_LOGICAL_ZERO : SystemZ::CCMASK_LOGICAL_NONZERO);
+        CCMask &= CCValues; // Logical subtracts never set CC=0.
+      } else {
+        if (CCMask & ~ReusableCCMask)
+          CCMask = (CCMask & ReusableCCMask) | (CCValues & ~ReusableCCMask);
+        CCMask |= (CCMask & OFImplies) ? SystemZ::CCMASK_ARITH_OVERFLOW : 0;
+      }
+      AlterMasks[I + 1]->setImm(CCMask);
+    }
+  }
+
+  if (!DoAdjust)
+    return true;
+
+  // CC is now live after MI.
+  if (!ConvOpc)
+    MI.clearRegisterDeads(SystemZ::CC);
+
+  // Check if MI lies before Compare.
+  bool BeforeCmp = false;
+  MachineBasicBlock::iterator MBBI = MI, MBBE = MI.getParent()->end();
+  for (++MBBI; MBBI != MBBE; ++MBBI)
+    if (MBBI == Compare) {
+      BeforeCmp = true;
+      break;
+    }
+
+  // Clear any intervening kills of CC.
+  if (BeforeCmp) {
+    MachineBasicBlock::iterator MBBI = MI, MBBE = Compare;
+    for (++MBBI; MBBI != MBBE; ++MBBI)
+      MBBI->clearRegisterKills(SystemZ::CC, &RI);
+  }
+
+  return true;
+}
+
+unsigned SystemZInstrInfo::getConvertToLogicalOpcode(unsigned Opcode) const {
+  switch (Opcode) {
+  case SystemZ::AR:   return SystemZ::ALR;
+  case SystemZ::ARK:  return SystemZ::ALRK;
+  case SystemZ::AGR:  return SystemZ::ALGR;
+  case SystemZ::AGRK: return SystemZ::ALGRK;
+  case SystemZ::A:    return SystemZ::AL;
+  case SystemZ::AY:   return SystemZ::ALY;
+  case SystemZ::AG:   return SystemZ::ALG;
+  default:            return 0;
+  }
+}
+
 bool SystemZInstrInfo::
 prepareCompareSwapOperands(MachineBasicBlock::iterator const MBBI) const {
   assert(MBBI->isCompare() && MBBI->getOperand(0).isReg() &&

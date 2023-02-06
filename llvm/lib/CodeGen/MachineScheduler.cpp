@@ -285,7 +285,7 @@ namespace {
 /// MachineScheduler runs after coalescing and before register allocation.
 class MachineSchedulerLegacy : public MachineFunctionPass {
   MachineSchedulerImpl Impl;
-
+  
 public:
   MachineSchedulerLegacy();
   void getAnalysisUsage(AnalysisUsage &AU) const override;
@@ -2615,6 +2615,9 @@ SchedBoundary::getNextResourceCycle(const MCSchedClassDesc *SC, unsigned PIdx,
 ///
 /// TODO: Also check whether the SU must start a new group.
 bool SchedBoundary::checkHazard(SUnit *SU) {
+  if (!InOrderHazardChecks)
+    return false; // Better to make SU available and reduce register pressure.
+
   if (HazardRec->isEnabled()
       && HazardRec->getHazardType(SU) != ScheduleHazardRecognizer::NoHazard) {
     return true;
@@ -2851,9 +2854,10 @@ void SchedBoundary::bumpNode(SUnit *SU) {
   // exceed the issue width.
   const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
   unsigned IncMOps = SchedModel->getNumMicroOps(SU->getInstr());
-  assert(
-      (CurrMOps == 0 || (CurrMOps + IncMOps) <= SchedModel->getIssueWidth()) &&
-      "Cannot schedule this instruction's MicroOps in the current cycle.");
+  assert((!InOrderHazardChecks ||
+          (CurrMOps == 0 ||
+           (CurrMOps + IncMOps) <= SchedModel->getIssueWidth())) &&
+         "Cannot schedule this instruction's MicroOps in the current cycle.");
 
   unsigned ReadyCycle = (isTop() ? SU->TopReadyCycle : SU->BotReadyCycle);
   LLVM_DEBUG(dbgs() << "  Ready @" << ReadyCycle << "c\n");
@@ -3146,31 +3150,6 @@ initResourceDelta(const ScheduleDAGMI *DAG,
   }
 }
 
-/// Compute remaining latency. We need this both to determine whether the
-/// overall schedule has become latency-limited and whether the instructions
-/// outside this zone are resource or latency limited.
-///
-/// The "dependent" latency is updated incrementally during scheduling as the
-/// max height/depth of scheduled nodes minus the cycles since it was
-/// scheduled:
-///   DLat = max (N.depth - (CurrCycle - N.ReadyCycle) for N in Zone
-///
-/// The "independent" latency is the max ready queue depth:
-///   ILat = max N.depth for N in Available|Pending
-///
-/// RemainingLatency is the greater of independent and dependent latency.
-///
-/// These computations are expensive, especially in DAGs with many edges, so
-/// only do them if necessary.
-static unsigned computeRemLatency(SchedBoundary &CurrZone) {
-  unsigned RemLatency = CurrZone.getDependentLatency();
-  RemLatency = std::max(RemLatency,
-                        CurrZone.findMaxLatency(CurrZone.Available.elements()));
-  RemLatency = std::max(RemLatency,
-                        CurrZone.findMaxLatency(CurrZone.Pending.elements()));
-  return RemLatency;
-}
-
 /// Returns true if the current cycle plus remaning latency is greater than
 /// the critical path in the scheduling region.
 bool GenericSchedulerBase::shouldReduceLatency(const CandPolicy &Policy,
@@ -3256,11 +3235,14 @@ const char *GenericSchedulerBase::getReasonStr(
   case NoCand:         return "NOCAND    ";
   case Only1:          return "ONLY1     ";
   case PhysReg:        return "PHYS-REG  ";
+  case ChainReduce:    return "CHAIN-RED ";
+  case LivenessReduce: return "LIVE-REDUC";
   case RegExcess:      return "REG-EXCESS";
   case RegCritical:    return "REG-CRIT  ";
   case Stall:          return "STALL     ";
   case Cluster:        return "CLUSTER   ";
   case Weak:           return "WEAK      ";
+  case CmpCC:          return "CMPCC    ";
   case RegMax:         return "REG-MAX   ";
   case ResourceReduce: return "RES-REDUCE";
   case ResourceDemand: return "RES-DEMAND";
@@ -3329,6 +3311,31 @@ void GenericSchedulerBase::traceCandidate(const SchedCandidate &Cand) {
 #endif
 
 namespace llvm {
+/// Compute remaining latency. We need this both to determine whether the
+/// overall schedule has become latency-limited and whether the instructions
+/// outside this zone are resource or latency limited.
+///
+/// The "dependent" latency is updated incrementally during scheduling as the
+/// max height/depth of scheduled nodes minus the cycles since it was
+/// scheduled:
+///   DLat = max (N.depth - (CurrCycle - N.ReadyCycle) for N in Zone
+///
+/// The "independent" latency is the max ready queue depth:
+///   ILat = max N.depth for N in Available|Pending
+///
+/// RemainingLatency is the greater of independent and dependent latency.
+///
+/// These computations are expensive, especially in DAGs with many edges, so
+/// only do them if necessary.
+unsigned computeRemLatency(SchedBoundary &CurrZone) {
+  unsigned RemLatency = CurrZone.getDependentLatency();
+  RemLatency = std::max(RemLatency,
+                        CurrZone.findMaxLatency(CurrZone.Available.elements()));
+  RemLatency = std::max(RemLatency,
+                        CurrZone.findMaxLatency(CurrZone.Pending.elements()));
+  return RemLatency;
+}
+
 /// Return true if this heuristic determines order.
 /// TODO: Consider refactor return type of these functions as integer or enum,
 /// as we may need to differentiate whether TryCand is better than Cand.

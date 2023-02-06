@@ -1,0 +1,117 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+# The CDFBR has a longer latency than the VL64, so schedule it above.
+# CHECK:      name: fun0
+# CHECK:      %2:fp64bit = nofpexcept CDFBR %0, implicit $fpc
+# CHECK-NEXT: %1:vr64bit = VL64 $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+# CHECK-NEXT: undef %3.subreg_h64:vr128bit = nofpexcept WFDDB %1, %2, implicit $fpc
+---
+name:            fun0
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2l
+  
+    %0:gr32bit = COPY $r2l
+    %1:vr64bit = VL64 $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+    %2:fp64bit = nofpexcept CDFBR %0, implicit $fpc
+    undef %3.subreg_h64:vr128bit = nofpexcept WFDDB %1, %2, implicit $fpc
+    %4:vr128bit = VGBM 0
+    %5:vr128bit = VMRHG %3, %4
+    VST %5, $noreg, 0, $noreg :: (store (s128) into `ptr null`, align 8)
+    Return
+...
+
+# The AGHIK has a height of 1 while the LA has a height of 0, but *don't* move the AGHIK
+# up, because the TMLMux (height 1) has already been scheduled (scheduled latency is preserved).
+# CHECK:      name: fun1
+# CHECK:      %3:addr64bit = LA %3, 1, $noreg
+# CHECK-NEXT: %4:gr64bit = AGHIK %4, -1, implicit-def dead $cc
+# CHECK-NEXT: TMLMux %0, 1, implicit-def $cc
+# CHECK-NEXT: BRC 15, 7, %bb.1, implicit killed $cc
+# CHECK-NEXT: Return
+---
+name:            fun1
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r2l, $r3l
+  
+    %0:gr32bit = COPY $r3l
+    %1:gr32bit = COPY $r2l
+    %2:gr32bit = COPY %0
+    %3:addr64bit = LGHI 0
+    %4:gr64bit = COPY %3
+    %5:gr32bit = COPY %2
+    J %bb.1
+  
+  bb.1:
+    successors: %bb.1(0x80000000)
+  
+    %6:gr32bit = MSRKC %1, %5, implicit-def dead $cc
+    %2:gr32bit = ORK %6, %2, implicit-def dead $cc
+    %3:addr64bit = LA %3, 1, $noreg
+    %4:gr64bit = AGHIK %4, -1, implicit-def dead $cc
+    TMLMux %0, 1, implicit-def $cc
+    BRC 15, 7, %bb.1, implicit killed $cc
+    Return
+...
+
+# The TMLMux has height=1, while the SLLK is height=0. Both nodes have depth=0, so
+# since the remaining latency is 0 none of the nodes have room to be moved up:
+# *Don't* care about the height difference.
+# CHECK:      name: fun2
+# CHECK:      %1:gr32bit = SLLK %1, $noreg, 1
+# CHECK-NEXT: TMLMux %0, 1, implicit-def $cc
+# CHECK-NEXT: BRC 15, 7, %bb.2, implicit killed $cc
+# CHECK-NEXT: J %bb.1
+---
+name:            fun2
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.2(0x80000000)
+    liveins: $r2l
+  
+    %0:gr32bit = COPY $r2l
+    %1:gr32bit = LHIMux 0
+    J %bb.2
+  
+  bb.1:
+    Return
+  
+  bb.2:
+    successors: %bb.2(0x7c000000), %bb.1(0x04000000)
+  
+    %1:gr32bit = SLLK %1, $noreg, 1
+    TMLMux %0, 1, implicit-def $cc
+    BRC 15, 7, %bb.2, implicit killed $cc
+    J %bb.1
+...
+
+# This region has many nodes (8) compared to the maximum height (2). *Don't* care
+# about heights and schedule the SGRK directly above the RISBGN, even though the SLLG
+# has height=0.
+# CHECK:      name: fun3
+# CHECK:      dead %2:gr64bit = SLLG %1, $noreg, 2
+# CHECK-NEXT: %3:gr64bit = LGHI 1
+# CHECK-NEXT: %4:gr64bit = SGRK %3, %1, implicit-def dead $cc
+# CHECK-NEXT: dead %5:gr64bit = RISBGN undef %5, %4, 63, 191, 0
+---
+name:            fun3
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d, $r3l
+  
+    %0:gr32bit = COPY $r3l
+    %1:gr64bit = COPY $r2d
+    %2:gr64bit = SLLG %1, $noreg, 2
+    %3:gr64bit = LGHI 1
+    %4:gr64bit = SGRK %3, %1, implicit-def dead $cc
+    %5:gr64bit = RISBGN undef %5, %4, 63, 191, 0
+    %6:gr64bit = COPY %0
+    %7:gr64bit = COPY %1
+...

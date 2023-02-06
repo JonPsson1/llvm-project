@@ -1,0 +1,102 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -sched-pregcopys -sched-pregc-users=2 \
+# RUN:   -verify-machineinstrs -run-pass=machine-scheduler 2>&1 \
+# RUN:   | FileCheck %s
+
+### Needed for aliasing in @fun3, but needs to come before the MIR definitions.
+--- |
+  define void @fun0() #0 { ret void }
+  define void @fun1() #0 { ret void }
+  define void @fun2() #0 { ret void }
+  define void @fun3(ptr %Arg) #0 { ret void }
+...
+###
+
+# Schedule '%1 = LA' above '%2 = LG' to allow both live ranges to use $r4d.
+# CHECK:      name: fun0
+# CHECK:      %0:addr64bit = COPY $r4d
+# CHECK-NEXT: %1:gr64bit = LA %0, 8, $noreg
+# CHECK-NEXT: %2:gr64bit = LG $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+# CHECK:      $r4d = COPY %2
+---
+name:            fun0
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r4d
+  
+    %0:addr64bit = COPY $r4d
+    %1:gr64bit = LA %0, 8, $noreg
+    %2:gr64bit = LG $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+    %3:addr64bit = LGHI 0
+    $r2d = LGHI 0
+    $r3d = COPY %1
+    $r4d = COPY %2
+    CallBASR %3, killed $r2d, killed $r3d, $r4d, csr_systemz_elf, implicit-def dead $r14d, implicit-def dead $cc, implicit $fpc
+    Return
+...
+
+# The '%3 = LA' can be scheduled as soon as the AGFR is (bottom-up).
+# CHECK:      name: fun1
+# CHECK:      %0:addr64bit = COPY $r2d
+# CHECK:      dead %3:gr64bit = LA %0, 1, $noreg
+# CHECK-NEXT: %4:gr64bit = AGFR %4, %1, implicit-def dead $cc
+# CHECK-NEXT: $r2d = COPY %4
+---
+name:            fun1
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d
+
+    %0:addr64bit = COPY $r2d
+    %1:gr32bit = LHI 1
+    %2:gr64bit = LGHI 2
+    %3:gr64bit = LA %0, 1, $noreg
+    %4:gr64bit = COPY %2
+    %4:gr64bit = AGFR %4, %1, implicit-def dead $cc
+    $r2d = COPY %4
+    Return implicit $r2d
+...
+
+# Test that both users of %0 end up above the '%1 = LA' (MVHI above LA).
+# CHECK:      name: fun2
+# CHECK:      %0:addr64bit = COPY $r2d
+# CHECK-NEXT: MVHI %0, 0, 0 :: (store (s32))
+# CHECK-NEXT: %1:gr64bit = LA %0, 4, $noreg
+# CHECK-NEXT: $r2d = COPY %1
+---
+name:            fun2
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d
+
+    %0:addr64bit = COPY $r2d
+    MVHI %0, 0, 0 :: (store (s32))
+    %1:gr64bit = LA %0, 4, $noreg
+    $r2d = COPY %1
+    Return implicit $r2d
+...
+
+# Test that the 'MVGHI %0' isn't pushed above the '%1 = LGF' after 'STG %0' is scheduled.
+# CHECK:      name: fun3
+# CHECK:      %0:addr64bit = COPY $r2d
+# CHECK:      %1:gr64bit = LGF $noreg, 0, $noreg :: (load (s32) from `ptr null`, align 8)
+# CHECK:      MVGHI %0, 0, 0 :: (store (s64) into %ir.Arg)
+# CHECK:      STG %0, $r15d, 160, $noreg :: (store (s64))
+# CHECK:      $r2d = COPY %1
+---
+name:            fun3
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d
+
+    %0:addr64bit = COPY $r2d
+    MVGHI %0, 0, 0 :: (store (s64) into %ir.Arg)
+    %1:gr64bit = LGF $noreg, 0, $noreg :: (load (s32) from `ptr null`, align 8)
+    STG %0, $r15d, 160, $noreg :: (store (s64))
+    %5:addr64bit = LGHI 0
+    $r2d = COPY %1
+    Return implicit $r2d
+...

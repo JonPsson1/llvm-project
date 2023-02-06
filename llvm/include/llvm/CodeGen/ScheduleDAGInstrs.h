@@ -287,7 +287,7 @@ namespace llvm {
     }
 
     /// IsReachable - Checks if SU is reachable from TargetSU.
-    bool IsReachable(SUnit *SU, SUnit *TargetSU) {
+    bool IsReachable(const SUnit *SU, const SUnit *TargetSU) {
       return Topo.IsReachable(SU, TargetSU);
     }
 

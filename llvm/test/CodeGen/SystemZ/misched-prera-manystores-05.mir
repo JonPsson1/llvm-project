@@ -1,0 +1,66 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+# Test that a group of stores is only rescheduled if they all have the same
+# opcode. There are 8 stores, but it is a mix of VST and STG, so they are all
+# scheduled low.
+# CHECK:      name: fun
+#CHECK:       VST64 %4, %3, 176, $noreg :: (store (s64) into %ir.arrayidx1353)
+#CHECK-NEXT:  VST %6, %1, 0, $noreg :: (store (s128) into %ir.Arg0, align 8)
+#CHECK-NEXT:  VST %7, $noreg, 0, $noreg :: (store (s128) into `ptr null`, align 8)
+#CHECK-NEXT:  %8:gr64bit = LLIHH 16368
+#CHECK-NEXT:  STG %8, %0, 0, $noreg :: (store (s64) into %ir.Arg2)
+#CHECK-NEXT:  STG %8, %1, 0, $noreg :: (store (s64) into %ir.Arg0)
+#CHECK-NEXT:  STG %8, %0, 0, $noreg :: (store (s64) into %ir.Arg2)
+#CHECK-NEXT:  STG %8, %1, 0, $noreg :: (store (s64) into %ir.Arg0)
+#CHECK-NEXT:  STG %8, $noreg, 0, $noreg :: (store (s64) into `ptr null`)
+--- |
+  define void @fun(ptr %Arg0, ptr %Arg2, ptr %Arg4) #0 {
+  entry:
+    %L0 = load ptr, ptr null, align 8
+    %arrayidx1353 = getelementptr i8, ptr %L0, i64 176
+    %2 = load double, ptr %Arg4, align 8
+    %add1354 = fadd double %2, 0.000000e+00
+    store double %add1354, ptr %arrayidx1353, align 8
+    %3 = load <2 x double>, ptr %L0, align 8
+    %4 = fadd <2 x double> zeroinitializer, %3
+    store <2 x double> zeroinitializer, ptr %Arg0, align 8
+    store <2 x double> %4, ptr null, align 8
+    store double 1.000000e+00, ptr %Arg2, align 8
+    store double 1.000000e+00, ptr %Arg0, align 8
+    store double 1.000000e+00, ptr %Arg2, align 8
+    store double 1.000000e+00, ptr %Arg0, align 8
+    store double 1.000000e+00, ptr null, align 8
+    ret void
+  }
+...
+---
+name:            fun
+tracksRegLiveness: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 8, alignment: 8, stack-id: default }
+body:             |
+  bb.0:
+    liveins: $r2d, $r3d
+  
+    %1:addr64bit = COPY $r3d
+    %0:addr64bit = COPY $r2d
+    %5:addr64bit = LG %fixed-stack.0, 0, $noreg :: (load (s64) from %fixed-stack.0)
+    %6:addr64bit = LG $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+    %8:fp64bit = LZDR
+    %8:fp64bit = nofpexcept ADB %8, %5, 0, $noreg, implicit-def dead $cc, implicit $fpc :: (load (s64) from %ir.Arg4)
+    VST64 %8, %6, 176, $noreg :: (store (s64) into %ir.arrayidx1353)
+    %9:vr128bit = VL %6, 0, $noreg :: (load (s128) from %ir.L0, align 8)
+    %10:vr128bit = VGBM 0
+    %11:vr128bit = nofpexcept VFADB %9, %10, implicit $fpc
+    VST %10, %0, 0, $noreg :: (store (s128) into %ir.Arg0, align 8)
+    VST %11, $noreg, 0, $noreg :: (store (s128) into `ptr null`, align 8)
+    %12:gr64bit = LLIHH 16368
+    STG %12, %1, 0, $noreg :: (store (s64) into %ir.Arg2)
+    STG %12, %0, 0, $noreg :: (store (s64) into %ir.Arg0)
+    STG %12, %1, 0, $noreg :: (store (s64) into %ir.Arg2)
+    STG %12, %0, 0, $noreg :: (store (s64) into %ir.Arg0)
+    STG %12, $noreg, 0, $noreg :: (store (s64) into `ptr null`)
+    Return
+
+...

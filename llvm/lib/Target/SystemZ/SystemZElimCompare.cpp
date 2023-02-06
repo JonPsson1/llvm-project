@@ -87,9 +87,6 @@ private:
                             SmallVectorImpl<MachineInstr *> &CCUsers);
   bool convertToLogical(MachineInstr &MI, MachineInstr &Compare,
                         SmallVectorImpl<MachineInstr *> &CCUsers);
-  bool adjustCCMasksForInstr(MachineInstr &MI, MachineInstr &Compare,
-                             SmallVectorImpl<MachineInstr *> &CCUsers,
-                             unsigned ConvOpc = 0);
   bool optimizeCompareZero(MachineInstr &Compare,
                            SmallVectorImpl<MachineInstr *> &CCUsers);
   bool fuseCompareOperations(MachineInstr &Compare,
@@ -153,30 +150,6 @@ Reference SystemZElimCompare::getRegReferences(MachineInstr &MI, unsigned Reg) {
   return Ref;
 }
 
-// Return true if this is a load and test which can be optimized the
-// same way as compare instruction.
-static bool isLoadAndTestAsCmp(MachineInstr &MI) {
-  // If we during isel used a load-and-test as a compare with 0, the
-  // def operand is dead.
-  return (MI.getOpcode() == SystemZ::LTEBR ||
-          MI.getOpcode() == SystemZ::LTDBR ||
-          MI.getOpcode() == SystemZ::LTXBR) &&
-         MI.getOperand(0).isDead();
-}
-
-// Return the source register of Compare, which is the unknown value
-// being tested.
-static unsigned getCompareSourceReg(MachineInstr &Compare) {
-  unsigned reg = 0;
-  if (Compare.isCompare())
-    reg = Compare.getOperand(0).getReg();
-  else if (isLoadAndTestAsCmp(Compare))
-    reg = Compare.getOperand(1).getReg();
-  assert(reg);
-
-  return reg;
-}
-
 // Compare compares the result of MI against zero.  If MI is an addition
 // of -1 and if CCUsers is a single branch on nonzero, eliminate the addition
 // and convert the branch to a BRCT(G) or BRCTH.  Return true on success.
@@ -209,7 +182,7 @@ bool SystemZElimCompare::convertToBRCT(
   // We already know that there are no references to the register between
   // MI and Compare.  Make sure that there are also no references between
   // Compare and Branch.
-  unsigned SrcReg = getCompareSourceReg(Compare);
+  unsigned SrcReg = TII->getCompareSourceReg(Compare);
   MachineBasicBlock::iterator MBBI = Compare, MBBE = Branch;
   for (++MBBI; MBBI != MBBE; ++MBBI)
     if (getRegReferences(*MBBI, SrcReg))
@@ -253,7 +226,7 @@ bool SystemZElimCompare::convertToLoadAndTrap(
   // We already know that there are no references to the register between
   // MI and Compare.  Make sure that there are also no references between
   // Compare and Branch.
-  unsigned SrcReg = getCompareSourceReg(Compare);
+  unsigned SrcReg = TII->getCompareSourceReg(Compare);
   MachineBasicBlock::iterator MBBI = Compare, MBBE = Branch;
   for (++MBBI; MBBI != MBBE; ++MBBI)
     if (getRegReferences(*MBBI, SrcReg))
@@ -280,7 +253,7 @@ bool SystemZElimCompare::convertToLoadAndTest(
 
   // Try to adjust CC masks for the LOAD AND TEST opcode that could replace MI.
   unsigned Opcode = TII->getLoadAndTest(MI.getOpcode());
-  if (!Opcode || !adjustCCMasksForInstr(MI, Compare, CCUsers, Opcode))
+  if (!Opcode || !TII->adjustCCMasksForInstr(MI, Compare, CCUsers, Opcode))
     return false;
 
   // Rebuild to get the CC operand in the right place.
@@ -306,18 +279,8 @@ bool SystemZElimCompare::convertToLogical(
     MachineInstr &MI, MachineInstr &Compare,
     SmallVectorImpl<MachineInstr *> &CCUsers) {
 
-  unsigned ConvOpc = 0;
-  switch (MI.getOpcode()) {
-  case SystemZ::AR:   ConvOpc = SystemZ::ALR;   break;
-  case SystemZ::ARK:  ConvOpc = SystemZ::ALRK;  break;
-  case SystemZ::AGR:  ConvOpc = SystemZ::ALGR;  break;
-  case SystemZ::AGRK: ConvOpc = SystemZ::ALGRK; break;
-  case SystemZ::A:    ConvOpc = SystemZ::AL;    break;
-  case SystemZ::AY:   ConvOpc = SystemZ::ALY;   break;
-  case SystemZ::AG:   ConvOpc = SystemZ::ALG;   break;
-  default: break;
-  }
-  if (!ConvOpc || !adjustCCMasksForInstr(MI, Compare, CCUsers, ConvOpc))
+  unsigned ConvOpc = TII->getConvertToLogicalOpcode(MI.getOpcode());
+  if (!ConvOpc || !TII->adjustCCMasksForInstr(MI, Compare, CCUsers, ConvOpc))
     return false;
 
   // Operands should be identical, so just change the opcode and remove the
@@ -327,186 +290,17 @@ bool SystemZElimCompare::convertToLogical(
   return true;
 }
 
-#ifndef NDEBUG
-static bool isAddWithImmediate(unsigned Opcode) {
-  switch(Opcode) {
-  case SystemZ::AHI:
-  case SystemZ::AHIK:
-  case SystemZ::AGHI:
-  case SystemZ::AGHIK:
-  case SystemZ::AFI:
-  case SystemZ::AIH:
-  case SystemZ::AGFI:
-    return true;
-  default: break;
-  }
-  return false;
-}
-#endif
-
-// The CC users in CCUsers are testing the result of a comparison of some
-// value X against zero and we know that any CC value produced by MI would
-// also reflect the value of X.  ConvOpc may be used to pass the transfomed
-// opcode MI will have if this succeeds.  Try to adjust CCUsers so that they
-// test the result of MI directly, returning true on success.  Leave
-// everything unchanged on failure.
-bool SystemZElimCompare::adjustCCMasksForInstr(
-    MachineInstr &MI, MachineInstr &Compare,
-    SmallVectorImpl<MachineInstr *> &CCUsers,
-    unsigned ConvOpc) {
-  unsigned CompareFlags = Compare.getDesc().TSFlags;
-  unsigned CompareCCValues = SystemZII::getCCValues(CompareFlags);
-  int Opcode = (ConvOpc ? ConvOpc : MI.getOpcode());
-  const MCInstrDesc &Desc = TII->get(Opcode);
-  unsigned MIFlags = Desc.TSFlags;
-
-  // If Compare may raise an FP exception, we can only eliminate it
-  // if MI itself would have already raised the exception.
-  if (Compare.mayRaiseFPException()) {
-    // If the caller will change MI to use ConvOpc, only test whether
-    // ConvOpc is suitable; it is on the caller to set the MI flag.
-    if (ConvOpc && !Desc.mayRaiseFPException())
-      return false;
-    // If the caller will not change MI, we test the MI flag here.
-    if (!ConvOpc && !MI.mayRaiseFPException())
-      return false;
-  }
-
-  // See which compare-style condition codes are available.
-  unsigned CCValues = SystemZII::getCCValues(MIFlags);
-  unsigned ReusableCCMask = CCValues;
-  // For unsigned comparisons with zero, only equality makes sense.
-  if (CompareFlags & SystemZII::IsLogical)
-    ReusableCCMask &= SystemZ::CCMASK_CMP_EQ;
-  unsigned OFImplies = 0;
-  bool LogicalMI = false;
-  bool MIEquivalentToCmp = false;
-  if (MI.getFlag(MachineInstr::NoSWrap) &&
-      (MIFlags & SystemZII::CCIfNoSignedWrap)) {
-    // If MI has the NSW flag set in combination with the
-    // SystemZII::CCIfNoSignedWrap flag, all CCValues are valid.
-  }
-  else if ((MIFlags & SystemZII::CCIfNoSignedWrap) &&
-           MI.getOperand(2).isImm()) {
-    // Signed addition of immediate. If adding a positive immediate
-    // overflows, the result must be less than zero. If adding a negative
-    // immediate overflows, the result must be larger than zero (except in
-    // the special case of adding the minimum value of the result range, in
-    // which case we cannot predict whether the result is larger than or
-    // equal to zero).
-    assert(isAddWithImmediate(Opcode) && "Expected an add with immediate.");
-    assert(!MI.mayLoadOrStore() && "Expected an immediate term.");
-    int64_t RHS = MI.getOperand(2).getImm();
-    if (SystemZ::GRX32BitRegClass.contains(MI.getOperand(0).getReg()) &&
-        RHS == INT32_MIN)
-      return false;
-    OFImplies = (RHS > 0 ? SystemZ::CCMASK_CMP_LT : SystemZ::CCMASK_CMP_GT);
-  }
-  else if ((MIFlags & SystemZII::IsLogical) && CCValues) {
-    // Use CCMASK_CMP_EQ to match with CCUsers. On success CCMask:s will be
-    // converted to CCMASK_LOGICAL_ZERO or CCMASK_LOGICAL_NONZERO.
-    LogicalMI = true;
-    ReusableCCMask = SystemZ::CCMASK_CMP_EQ;
-  }
-  else {
-    ReusableCCMask &= SystemZII::getCompareZeroCCMask(MIFlags);
-    assert((ReusableCCMask & ~CCValues) == 0 && "Invalid CCValues");
-    MIEquivalentToCmp =
-      ReusableCCMask == CCValues && CCValues == CompareCCValues;
-  }
-  if (ReusableCCMask == 0)
-    return false;
-
-  if (!MIEquivalentToCmp) {
-    // Now check whether these flags are enough for all users.
-    SmallVector<MachineOperand *, 4> AlterMasks;
-    for (MachineInstr *CCUserMI : CCUsers) {
-      // Fail if this isn't a use of CC that we understand.
-      unsigned Flags = CCUserMI->getDesc().TSFlags;
-      unsigned FirstOpNum;
-      if (Flags & SystemZII::CCMaskFirst)
-        FirstOpNum = 0;
-      else if (Flags & SystemZII::CCMaskLast)
-        FirstOpNum = CCUserMI->getNumExplicitOperands() - 2;
-      else
-        return false;
-
-      // Check whether the instruction predicate treats all CC values
-      // outside of ReusableCCMask in the same way.  In that case it
-      // doesn't matter what those CC values mean.
-      unsigned CCValid = CCUserMI->getOperand(FirstOpNum).getImm();
-      unsigned CCMask = CCUserMI->getOperand(FirstOpNum + 1).getImm();
-      assert(CCValid == CompareCCValues && (CCMask & ~CCValid) == 0 &&
-             "Corrupt CC operands of CCUser.");
-      unsigned OutValid = ~ReusableCCMask & CCValid;
-      unsigned OutMask = ~ReusableCCMask & CCMask;
-      if (OutMask != 0 && OutMask != OutValid)
-        return false;
-
-      AlterMasks.push_back(&CCUserMI->getOperand(FirstOpNum));
-      AlterMasks.push_back(&CCUserMI->getOperand(FirstOpNum + 1));
-    }
-
-    // All users are OK.  Adjust the masks for MI.
-    for (unsigned I = 0, E = AlterMasks.size(); I != E; I += 2) {
-      AlterMasks[I]->setImm(CCValues);
-      unsigned CCMask = AlterMasks[I + 1]->getImm();
-      if (LogicalMI) {
-        // Translate the CCMask into its "logical" value.
-        CCMask = (CCMask == SystemZ::CCMASK_CMP_EQ ?
-                  SystemZ::CCMASK_LOGICAL_ZERO : SystemZ::CCMASK_LOGICAL_NONZERO);
-        CCMask &= CCValues; // Logical subtracts never set CC=0.
-      } else {
-        if (CCMask & ~ReusableCCMask)
-          CCMask = (CCMask & ReusableCCMask) | (CCValues & ~ReusableCCMask);
-        CCMask |= (CCMask & OFImplies) ? SystemZ::CCMASK_ARITH_OVERFLOW : 0;
-      }
-      AlterMasks[I + 1]->setImm(CCMask);
-    }
-  }
-
-  // CC is now live after MI.
-  if (!ConvOpc)
-    MI.clearRegisterDeads(SystemZ::CC);
-
-  // Check if MI lies before Compare.
-  bool BeforeCmp = false;
-  MachineBasicBlock::iterator MBBI = MI, MBBE = MI.getParent()->end();
-  for (++MBBI; MBBI != MBBE; ++MBBI)
-    if (MBBI == Compare) {
-      BeforeCmp = true;
-      break;
-    }
-
-  // Clear any intervening kills of CC.
-  if (BeforeCmp) {
-    MachineBasicBlock::iterator MBBI = MI, MBBE = Compare;
-    for (++MBBI; MBBI != MBBE; ++MBBI)
-      MBBI->clearRegisterKills(SystemZ::CC, TRI);
-  }
-
-  return true;
-}
-
-// Return true if Compare is a comparison against zero.
-static bool isCompareZero(MachineInstr &Compare) {
-  if (isLoadAndTestAsCmp(Compare))
-    return true;
-  return Compare.getNumExplicitOperands() == 2 &&
-    Compare.getOperand(1).isImm() && Compare.getOperand(1).getImm() == 0;
-}
-
 // Try to optimize cases where comparison instruction Compare is testing
 // a value against zero.  Return true on success and if Compare should be
 // deleted as dead.  CCUsers is the list of instructions that use the CC
 // value produced by Compare.
 bool SystemZElimCompare::optimizeCompareZero(
     MachineInstr &Compare, SmallVectorImpl<MachineInstr *> &CCUsers) {
-  if (!isCompareZero(Compare))
+  if (!TII->isCompareZero(Compare))
     return false;
 
   // Search back for CC results that are based on the first operand.
-  unsigned SrcReg = getCompareSourceReg(Compare);
+  unsigned SrcReg = TII->getCompareSourceReg(Compare);
   MachineBasicBlock &MBB = *Compare.getParent();
   Reference CCRefs;
   Reference SrcRefs;
@@ -531,7 +325,7 @@ bool SystemZElimCompare::optimizeCompareZero(
       // Try to eliminate Compare by reusing a CC result from MI.
       if ((!CCRefs && convertToLoadAndTest(MI, Compare, CCUsers)) ||
           (!CCRefs.Def &&
-           (adjustCCMasksForInstr(MI, Compare, CCUsers) ||
+           (TII->adjustCCMasksForInstr(MI, Compare, CCUsers) ||
             convertToLogical(MI, Compare, CCUsers)))) {
         EliminatedComparisons += 1;
         return true;
@@ -695,7 +489,7 @@ bool SystemZElimCompare::processBlock(MachineBasicBlock &MBB) {
   MachineBasicBlock::iterator MBBI = MBB.end();
   while (MBBI != MBB.begin()) {
     MachineInstr &MI = *--MBBI;
-    if (CompleteCCUsers && (MI.isCompare() || isLoadAndTestAsCmp(MI)) &&
+    if (CompleteCCUsers && (MI.isCompare() || TII->isLoadAndTestAsCmp(MI)) &&
         (optimizeCompareZero(MI, CCUsers) ||
          fuseCompareOperations(MI, CCUsers))) {
       ++MBBI;

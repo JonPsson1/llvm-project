@@ -862,6 +862,8 @@ public:
 
   ScheduleHazardRecognizer *HazardRec = nullptr;
 
+  bool InOrderHazardChecks = true;
+
 private:
   /// True if the pending Q should be checked/updated before scheduling another
   /// instruction.
@@ -988,6 +990,14 @@ public:
     return std::max(ExpectedLatency, CurrCycle);
   }
 
+  unsigned getExpectedLatency() const {
+    return ExpectedLatency;
+  }
+
+  void resetExpectedLatency(unsigned ExpLat) {
+    ExpectedLatency = ExpLat;
+  }
+
   unsigned getUnscheduledLatency(SUnit *SU) const {
     return isTop() ? SU->getHeight() : SU->getDepth();
   }
@@ -1087,11 +1097,13 @@ public:
     NoCand,
     Only1,
     PhysReg,
+    ChainReduce, LivenessReduce,
     RegExcess,
     RegCritical,
     Stall,
     Cluster,
     Weak,
+    CmpCC,
     RegMax,
     ResourceReduce,
     ResourceDemand,
@@ -1099,6 +1111,7 @@ public:
     BotPathReduce,
     TopDepthReduce,
     TopPathReduce,
+    NextDefUse,
     NodeOrder,
     FirstValid
   };
@@ -1218,6 +1231,7 @@ private:
 };
 
 // Utility functions used by heuristics in tryCandidate().
+unsigned computeRemLatency(SchedBoundary &CurrZone);
 bool tryLess(int TryVal, int CandVal,
              GenericSchedulerBase::SchedCandidate &TryCand,
              GenericSchedulerBase::SchedCandidate &Cand,

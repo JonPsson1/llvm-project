@@ -1,0 +1,32 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+# The MADB must group alone, which in the GenericScheduler would put it in the Pending set
+# to not be in Available until a new cycle is started. As it seems reasonable to not care
+# about decoder grouping pre-ra it is made available and is scheduled below the '%3 = WFMADB',
+# which is 2 cycles higher.
+# CHECK:      name: fun0
+# CHECK:      %3:vr64bit = nofpexcept WFMADB %1, %1, %0, implicit $fpc
+# CHECK-NEXT: %2:fp64bit = COPY %1
+# CHECK-NEXT: %2:fp64bit = nofpexcept MADB %2, %2, $noreg, 0, $noreg, implicit $fpc :: (load (s64) from `ptr null`)
+# CHECK-NEXT: %4:vr64bit = nofpexcept WFMDB %3, %1, implicit $fpc
+# CHECK-NEXT: %5:vr64bit = nofpexcept WFMADB %2, %1, %4, implicit $fpc
+# CHECK-NEXT: VST64 %5, $noreg, 0, $noreg :: (store (s64) into `ptr null`)
+# CHECK-NEXT: Return
+---
+name:            fun0
+tracksRegLiveness: true
+body:             |
+  bb.0.entry:
+    liveins: $f2d
+  
+    %0:fp64bit = COPY $f2d
+    %1:fp64bit = LZDR
+    %2:fp64bit = COPY %1
+    %2:fp64bit = nofpexcept MADB %2, %2, $noreg, 0, $noreg, implicit $fpc :: (load (s64) from `ptr null`)
+    %3:vr64bit = nofpexcept WFMADB %1, %1, %0, implicit $fpc
+    %4:vr64bit = nofpexcept WFMDB %3, %1, implicit $fpc
+    %5:vr64bit = nofpexcept WFMADB %2, %1, %4, implicit $fpc
+    VST64 %5, $noreg, 0, $noreg :: (store (s64) into `ptr null`)
+    Return
+...

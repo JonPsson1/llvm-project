@@ -205,6 +205,15 @@ SystemZTargetMachine::getSubtargetImpl(const Function &F) const {
   return I.get();
 }
 
+
+ScheduleDAGInstrs *
+SystemZTargetMachine::createMachineScheduler(MachineSchedContext *C) const  {
+  ScheduleDAGMILive *DAG =
+    new ScheduleDAGMILive(C, std::make_unique<SystemZPreRASchedStrategy>(C));
+  DAG->addMutation(createCopyConstrainDAGMutation(DAG->TII, DAG->TRI));
+  return DAG;
+}
+
 ScheduleDAGInstrs *
 SystemZTargetMachine::createPostMachineScheduler(MachineSchedContext *C) const {
   return new ScheduleDAGMI(C, std::make_unique<SystemZPostRASchedStrategy>(C),

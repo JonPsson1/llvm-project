@@ -356,6 +356,30 @@ public:
                            SystemZII::FusedCompareType Type,
                            const MachineInstr *MI = nullptr) const;
 
+  // Return true if this is a load and test which can be optimized the
+  // same way as compare instruction.
+  bool isLoadAndTestAsCmp(const MachineInstr &MI) const;
+
+  // Return true if Compare is a comparison against zero.
+  bool isCompareZero(const MachineInstr &Compare) const;
+
+  // Return the source register of Compare, which is the unknown value
+  // being tested.
+  unsigned getCompareSourceReg(const MachineInstr &Compare) const;
+
+  // The CC users in CCUsers are testing the result of a comparison of some
+  // value X against zero and we know that any CC value produced by MI would
+  // also reflect the value of X.  ConvOpc may be used to pass the transfomed
+  // opcode MI will have if this succeeds.  Try to adjust CCUsers so that they
+  // test the result of MI directly, returning true on success.  Leave
+  // everything unchanged on failure.  If DoAdjust is false, don't actually
+  // change anything, just return true or false.
+  bool adjustCCMasksForInstr(MachineInstr &MI, MachineInstr &Compare,
+                             SmallVectorImpl<MachineInstr *> &CCUsers,
+                             unsigned ConvOpc = 0, bool DoAdjust = true) const;
+
+  unsigned getConvertToLogicalOpcode(unsigned Opcode) const;
+
   // Try to find all CC users of the compare instruction (MBBI) and update
   // all of them to maintain equivalent behavior after swapping the compare
   // operands. Return false if not all users can be conclusively found and

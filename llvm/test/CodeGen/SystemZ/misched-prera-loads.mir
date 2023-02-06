@@ -1,0 +1,307 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+--- |
+  
+  define void @fun0(ptr %Arg) { ret void }
+  define void @fun1() { ret void }
+  define void @fun2(ptr %Arg) { ret void }
+  define void @fun3() { ret void }
+  define void @fun4(ptr %Arg) { ret void }
+  define void @fun5() { ret void }
+  define void @fun6() { ret void }
+  define void @fun7() { ret void }
+
+...
+
+# Schedule the '%1 = LG' right above the '%5 = AG'. The heurstic to move a load
+# down to its user to shorten the live range makes sure to not increase the
+# scheduled latency, so therefore it ends up above the AG.
+# CHECK:      name: fun0
+# CHECK:      %1:addr64bit = LG $noreg, 0, $noreg
+# CHECK-NEXT: dead %5:gr64bit = AG %4, $noreg, 0, $noreg, implicit-def dead $cc
+---
+name:            fun0
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d
+  
+    %0:addr64bit = COPY $r2d
+    %1:addr64bit = LG $noreg, 0, $noreg
+    %2:gr64bit = COPY %0
+    %3:gr64bit = LGHI 1
+    %4:gr64bit = AGRK %2, %3, implicit-def $cc
+    dead %5:gr64bit = AG %4, $noreg, 0, $noreg, implicit-def dead $cc
+    dead %6:addr64bit = LGHI 0
+    STG %1, $noreg, 0, $noreg
+    $r2d = LGHI 0
+    Return
+...
+
+# Schedule the '%3 = WFMADB' as soon as its only user and its use operands are already live:
+# CHECK:      name: fun1
+# CHECK:      %3:vr64bit = nofpexcept WFMADB %2, %2, %1, implicit $fpc
+# CHECK-NEXT: %7:vr64bit = nofpexcept WFMADB %1, %2, %2, implicit $fpc
+# CHECK-NEXT: %4:vr64bit = nofpexcept WFMDB %3, %2, implicit $fpc
+---
+name:            fun1
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $f0d, $f2d
+  
+    %0:fp64bit = COPY $f2d
+    %1:fp64bit = COPY $f0d
+    %2:fp64bit = LZDR
+    %3:vr64bit = nofpexcept WFMADB %2, %2, %1, implicit $fpc
+    %4:vr64bit = nofpexcept WFMDB %3, %2, implicit $fpc
+    %5:vr64bit = nofpexcept WFMADB %2, %2, %0, implicit $fpc
+    %6:vr64bit = nofpexcept WFMDB %5, %2, implicit $fpc
+    %7:vr64bit = nofpexcept WFMADB %1, %2, %2, implicit $fpc
+    %8:vr64bit = nofpexcept WFADB %7, %2, implicit $fpc
+    %9:addr64bit = LGHI 0
+    $f0d = COPY %2
+    $f2d = COPY %2
+    CallBASR %9, $f0d, $f2d, csr_systemz_elf, implicit-def dead $r14d, implicit-def dead $cc, implicit $fpc, implicit-def dead $f0d
+    %10:vr64bit = nofpexcept WFMADB %8, %2, %4, implicit $fpc
+    %11:vr64bit = nofpexcept WFMADB %6, %2, %10, implicit $fpc
+    VST64 %11, $noreg, 0, $noreg :: (store (s64) into `ptr null`)
+    Return
+...
+
+# *Don't* schedule the '%5 = MADB' as low as possible due to its def operand: it continues to be live above it.
+# CHECK:      name: fun2
+# CHECK:      %5:fp64bit = nofpexcept MADB %5, %2, %3, 0, $noreg, implicit $fpc :: (load (s64) from constant-pool)
+# CHECK-NEXT: VST64 %0, %1, 0, $noreg :: (store (s64) into %ir.Arg)
+# CHECK-NEXT: %11:fp64bit = COPY %0
+# CHECK-NEXT: %11:fp64bit = nofpexcept MDB %11, %10, 0, $noreg, implicit $fpc :: (load (s64) from constant-pool)
+# CHECK-NEXT: %6:vr64bit = nofpexcept WFMADB %4, %4, %5, implicit $fpc
+---
+name:            fun2
+tracksRegLiveness: true
+constants:
+  - id:              0
+    value:           'double 3.000000e+01'
+  - id:              1
+    value:           'double 2.100000e+02'
+machineFunctionInfo: {}
+body:             |
+  bb.0:
+    liveins: $r2d, $f0d
+  
+    %0:fp64bit = COPY $f0d
+    %1:addr64bit = COPY $r2d
+    %2:fp64bit = VL64 $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+    %3:addr64bit = LARL %const.0
+    %4:fp64bit = LZDR
+    %5:fp64bit = COPY %4
+    %5:fp64bit = nofpexcept MADB %5, %2, %3, 0, $noreg, implicit $fpc :: (load (s64) from constant-pool)
+    %6:vr64bit = nofpexcept WFMADB %4, %4, %5, implicit $fpc
+    %7:vr64bit = nofpexcept WFMADB %4, %4, %6, implicit $fpc
+    %8:vr64bit = nofpexcept WFMADB %4, %4, %7, implicit $fpc
+    %9:vr64bit = nofpexcept WFMDB %8, %4, implicit $fpc
+    %10:addr64bit = LARL %const.1
+    %11:fp64bit = COPY %0
+    %11:fp64bit = nofpexcept MDB %11, %10, 0, $noreg, implicit $fpc :: (load (s64) from constant-pool)
+    %12:vr64bit = nofpexcept WFMADB %4, %4, %11, implicit $fpc
+    %13:vr64bit = nofpexcept WFMADB %4, %4, %12, implicit $fpc
+    %14:vr64bit = nofpexcept WFMADB %4, %4, %13, implicit $fpc
+    %15:vr64bit = nofpexcept WFMADB %2, %4, %14, implicit $fpc
+    %16:vr64bit = nofpexcept WFADB %15, %4, implicit $fpc
+    %17:vr64bit = nofpexcept WFADB %16, %4, implicit $fpc
+    %18:vr64bit = nofpexcept WFMDB %17, %4, implicit $fpc
+    %19:vr64bit = nofpexcept WFMADB %9, %4, %4, implicit $fpc
+    %20:vr64bit = nofpexcept WFMADB %4, %4, %19, implicit $fpc
+    %21:vr64bit = nofpexcept WFMADB %4, %4, %20, implicit $fpc
+    %22:vr64bit = nofpexcept WFMADB %18, %4, %21, implicit $fpc
+    VST64 %0, %1, 0, $noreg :: (store (s64) into %ir.Arg)
+    VST64 %22, $noreg, 0, $noreg :: (store (s64) into `ptr null`)
+    Return
+...
+
+# *Don't* schedule the '%2 = LGFR' right above its user: %1 is not live.
+# CHECK:      name: fun3
+# CHECK:      %2:gr64bit = LGFR %1
+# CHECK-NEXT: %3:gr64bit = LGFR %0
+# CHECK-NEXT: %3:gr64bit = MSGF %3, $noreg, 4, $noreg :: (load (s32))
+# CHECK-NEXT: %2:gr64bit = MSGF %2, $noreg, 4, $noreg :: (load (s32))
+---
+name:            fun3
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r3l, $r5l
+  
+    %0:gr32bit = COPY $r5l
+    %1:gr32bit = COPY $r3l
+    %2:gr64bit = LGFR %1
+    %3:gr64bit = LGFR %0
+    %3:gr64bit = MSGF %3, $noreg, 4, $noreg :: (load (s32))
+    %2:gr64bit = MSGF %2, $noreg, 4, $noreg :: (load (s32))
+    %4:gr64bit = OGRK %2, %3, implicit-def dead $cc
+    %5:addr64bit = SLLG %4, $noreg, 3
+...
+
+# Schedule the '%3 = VL64' low, above the '%4 = LG'. It is loading a vr64,
+# which is prioritized, so even if %1 isn't live, that's ok as it is a GPR
+# register. This heruistic is guarded to not increment the scheduled latency,
+# which makes it wait until the '%4 = LG' is scheduled.
+# CHECK:      name: fun4
+# CHECK:      %2:vr64bit = VL64 %1, 0, $noreg :: (load (s64) from %ir.Arg)
+# CHECK-NEXT: %4:addr64bit = LG %0, 0, $noreg :: (load (s64) from %ir.Arg)
+# CHECK-NEXT: CallBASR implicit-def dead $r14d, implicit-def dead $cc, implicit $fpc
+---
+name:            fun4
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d, $r3d
+  
+    %0:addr64bit = COPY $r3d
+    %1:addr64bit = COPY $r2d
+    %2:vr64bit = VL64 %1, 0, $noreg :: (load (s64) from %ir.Arg)
+    %3:addr64bit = LG %1, 0, $noreg :: (load (s64) from `ptr null`)
+    %4:addr64bit = LG %0, 0, $noreg :: (load (s64) from %ir.Arg)
+    CallBASR implicit-def dead $r14d, implicit-def dead $cc, implicit $fpc
+    STG %3, $noreg, 0, $noreg
+    VST64 %2, $noreg, 0, $noreg
+    STG %4, $noreg, 0, $noreg
+    Return
+...
+
+# In this example, a load ('%16 = VLGVB') not too close to the top of region is scheduled low
+# even though it increases the scheduled latency.
+# CHECK:      name: fun5
+# CHECK:      %16:gr64bit = VLGVB %0, $noreg, 14
+# CHECK-NEXT: %17:gr64bit = VLGVB %0, $noreg, 15
+# CHECK-NEXT: %3:gr64bit = ROSBG %3, %16, 62, 62, 1, implicit-def dead $cc
+# CHECK-NEXT: %3:gr64bit = ROSBG %3, %17, 63, 63, 0, implicit-def dead $cc
+# CHECK-NEXT: %18:grx32bit = LLHRMux %3.subreg_l32
+# CHECK-NEXT: STMux %18, $noreg, 0, $noreg
+# CHECK-NEXT: Return
+---
+name:            fun5
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $v24
+  
+    %0:vr128bit = COPY $v24
+    %1:gr64bit = VLGVB %0, $noreg, 1
+    %2:gr64bit = VLGVB %0, $noreg, 0
+    undef %3.subreg_l32:gr64bit = RISBMux undef %3.subreg_l32, %2.subreg_l32, 16, 144, 15
+    %3:gr64bit = ROSBG %3, %1, 49, 49, 14, implicit-def dead $cc
+    %4:gr64bit = VLGVB %0, $noreg, 2
+    %3:gr64bit = ROSBG %3, %4, 50, 50, 13, implicit-def dead $cc
+    %5:gr64bit = VLGVB %0, $noreg, 3
+    %3:gr64bit = ROSBG %3, %5, 51, 51, 12, implicit-def dead $cc
+    %6:gr64bit = VLGVB %0, $noreg, 4
+    %3:gr64bit = ROSBG %3, %6, 52, 52, 11, implicit-def dead $cc
+    %7:gr64bit = VLGVB %0, $noreg, 5
+    %3:gr64bit = ROSBG %3, %7, 53, 53, 10, implicit-def dead $cc
+    %8:gr64bit = VLGVB %0, $noreg, 6
+    %3:gr64bit = ROSBG %3, %8, 54, 54, 9, implicit-def dead $cc
+    %9:gr64bit = VLGVB %0, $noreg, 7
+    %3:gr64bit = ROSBG %3, %9, 55, 55, 8, implicit-def dead $cc
+    %10:gr64bit = VLGVB %0, $noreg, 8
+    %3:gr64bit = ROSBG %3, %10, 56, 56, 7, implicit-def dead $cc
+    %11:gr64bit = VLGVB %0, $noreg, 9
+    %3:gr64bit = ROSBG %3, %11, 57, 57, 6, implicit-def dead $cc
+    %12:gr64bit = VLGVB %0, $noreg, 10
+    %3:gr64bit = ROSBG %3, %12, 58, 58, 5, implicit-def dead $cc
+    %13:gr64bit = VLGVB %0, $noreg, 11
+    %3:gr64bit = ROSBG %3, %13, 59, 59, 4, implicit-def dead $cc
+    %14:gr64bit = VLGVB %0, $noreg, 12
+    %3:gr64bit = ROSBG %3, %14, 60, 60, 3, implicit-def dead $cc
+    %15:gr64bit = VLGVB %0, $noreg, 13
+    %3:gr64bit = ROSBG %3, %15, 61, 61, 2, implicit-def dead $cc
+    %16:gr64bit = VLGVB %0, $noreg, 14
+    %3:gr64bit = ROSBG %3, %16, 62, 62, 1, implicit-def dead $cc
+    %17:gr64bit = VLGVB %0, $noreg, 15
+    %3:gr64bit = ROSBG %3, %17, 63, 63, 0, implicit-def dead $cc
+    %18:grx32bit = LLHRMux %3.subreg_l32
+    STMux %18, $noreg, 0, $noreg
+    Return
+...
+
+# The '%9 = VL64' will be considered fo scheduling before it's use operand %8
+# is live (address reg). It could have been scheduled above '%26 = LGHI', but
+# it is not because of %8. When '%19 = WFSDB' is scheduled, the scheduled latency
+# will not increase with the VL64, and it is scheduled, as it has VR64 def.
+# CHECK:      name: fun6
+# CHECK:      %9:vr64bit = VL64 %8, 0, $noreg :: (load (s64))
+# CHECK-NEXT: %19:vr64bit = nofpexcept WFSDB %18, %13, implicit $fpc
+# CHECK-NEXT: %26:addr64bit = LGHI 0
+# CHECK-NEXT: $f0d = COPY %9
+# CHECK-NEXT: CallBASR %26, $f0d, csr_systemz_elf, implicit-def dead $r14d, 
+---
+name:            fun6
+tracksRegLiveness: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 8 }
+body:             |
+  bb.0:
+    liveins: $r2d, $r3d, $r4d, $r5d, $r6d, $f0d, $f2d, $f4d
+  
+    %0:fp64bit = COPY $f4d
+    %1:fp64bit = COPY $f2d
+    %2:fp64bit = COPY $f0d
+    %3:addr64bit = COPY $r6d
+    %4:addr64bit = COPY $r5d
+    %5:addr64bit = COPY $r4d
+    %6:addr64bit = COPY $r3d
+    %7:addr64bit = COPY $r2d
+    %8:addr64bit = LG %fixed-stack.0, 0, $noreg :: (load (s64))
+    %9:vr64bit = VL64 %8, 0, $noreg :: (load (s64))
+    %10:fp64bit = LZDR
+    %11:vr64bit = nofpexcept WFMDB %1, %10, implicit $fpc
+    %12:fp64bit = COPY %10
+    %12:fp64bit = nofpexcept MDB %12, %7, 0, $noreg, implicit $fpc :: (load (s64))
+    %13:fp64bit = COPY %10
+    %13:fp64bit = nofpexcept MDB %13, %6, 0, $noreg, implicit $fpc :: (load (s64))
+    %14:vr128bit = VGMG 1, 12
+    %15:fp64bit = nofpexcept WFADB %0, %14.subreg_h64, implicit $fpc
+    %16:vr128bit = VGMG 2, 11
+    %17:vr64bit = nofpexcept WFSDB %16.subreg_h64, %11, implicit $fpc
+    %18:vr64bit = nofpexcept WFSDB %17, %12, implicit $fpc
+    %19:vr64bit = nofpexcept WFSDB %18, %13, implicit $fpc
+    %20:vr64bit = nofpexcept WFMDB %2, %10, implicit $fpc
+    %21:fp64bit = COPY %10
+    %21:fp64bit = nofpexcept SDB %21, %5, 0, $noreg, implicit-def dead $cc, implicit $fpc :: (load (s64))
+    %22:fp64bit = COPY %10
+    %22:fp64bit = nofpexcept SDB %22, %4, 0, $noreg, implicit-def dead $cc, implicit $fpc :: (load (s64))
+    %23:vr64bit = nofpexcept WFMDB %21, %10, implicit $fpc
+    %24:vr64bit = nofpexcept WFMADB %10, %10, %23, implicit $fpc
+    %25:fp64bit = nofpexcept WFMADB %22, %10, %24, implicit $fpc
+    %25:fp64bit = nofpexcept MADB %25, %15, %3, 0, $noreg, implicit $fpc :: (load (s64))
+    %26:addr64bit = LGHI 0
+    $f0d = COPY %9
+    CallBASR %26, $f0d, csr_systemz_elf, implicit-def dead $r14d, implicit-def dead $cc, implicit $fpc, implicit-def dead $f0d
+    $f0d = COPY %19
+    CallBASR %26, $f0d, csr_systemz_elf, implicit-def dead $r14d, implicit-def dead $cc, implicit $fpc, implicit-def dead $f0d
+    %27:vr64bit = nofpexcept WFMDB %20, %25, implicit $fpc
+    $r1d = LGHI 0
+    $f0d = COPY %27
+    CallBR killed $r1d, csr_systemz_elf, implicit $f0d
+...
+
+# The '%1 = LG' has no non-live use-operands, but it is the SU with the greatest height in the region.
+# Because of this, and since it is close to the top of the region, it is *not* scheduled immediately above
+# the 'STG %1'.
+# CHECK:      name: fun7
+# CHECK:      %1:gr64bit = LG $noreg, 8, $noreg
+# CHECK-NEXT: STMux %0, $noreg, 0, $noreg
+# CHECK-NEXT: STG %1, $noreg, 0, $noreg
+name:            fun7
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2l
+  
+    %0:grx32bit = COPY killed $r2l
+    STMux %0, $noreg, 0, $noreg :: (store (s32) into `ptr null`)
+    %1:gr64bit = LG $noreg, 8, $noreg :: (load (s64) from `ptr getelementptr inbounds nuw (i8, ptr null, i64 8)`)
+    STG %1, $noreg, 0, $noreg
+
+...

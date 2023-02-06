@@ -1,0 +1,189 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -sched-elimcmp \
+# RUN:   -verify-machineinstrs -run-pass=machine-scheduler 2>&1 \
+# RUN:   | FileCheck %s
+
+# Schedule AGHIK below the AHIMuxK so that CC is not clobbered.
+# CHECK:      name: fun0
+# CHECK:      %1:grx32bit = AHIMuxK %1, 2, implicit-def dead $cc
+# CHECK-NEXT: %0:gr64bit = nsw AGHIK %0, -2, implicit-def dead $cc
+# CHECK-NEXT: CGHI %0, 0, implicit-def $cc
+---
+name:            fun0
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    %0:gr64bit = LLIHL 1
+    %1:grx32bit = LHIMux 0
+
+  bb.1:
+    successors: %bb.1(0x04000000), %bb.2(0x7c000000)
+
+    %0:gr64bit = nsw AGHIK %0, -2, implicit-def dead $cc
+    %1:grx32bit = AHIMuxK %1, 2, implicit-def dead $cc
+    CGHI %0, 0, implicit-def $cc
+    BRC 14, 8, %bb.1, implicit killed $cc
+    J %bb.2
+
+  bb.2:
+    Return
+...
+
+# Schedule for LG -> LTG
+# CHECK:      name: fun1
+# CHECK:      %0:gr32bit = NIFMux %0, 1, implicit-def dead $cc
+# CHECK-NEXT: %1:gr64bit = LG $noreg, 0, $noreg
+# CHECK-NEXT: CGHI %1, 0, implicit-def $cc
+---
+name:            fun1
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    %0:gr32bit = LHIMux 0
+
+  bb.1:
+    %1:gr64bit = LG $noreg, 0, $noreg
+    %0:gr32bit = NIFMux %0, 1, implicit-def dead $cc
+    CGHI %1, 0, implicit-def $cc
+    %0:gr32bit = LOCHIMux %0, 0, 14, 6, implicit killed $cc
+
+  bb.2:
+    %3:gr64bit = LLGFR %0
+    $r2d = COPY %3
+    Return implicit $r2d
+...
+
+# Schedule for AGRK -> ALGR
+# CHECK:      name: fun2
+# CHECK:      %3:gr64bit = AGRK %3, %0, implicit-def dead $cc
+# CHECK-NEXT: %4:gr64bit = AGRK %1, %2, implicit-def dead $cc
+# CHECK-NEXT: CGHI %4, 0, implicit-def $cc
+---
+name:            fun2
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d, $r3d
+
+    %0:gr64bit = COPY $r3d
+    %1:gr64bit = COPY $r2d
+    %2:gr64bit = LGHI 1
+    %3:gr64bit = LGHI 2
+
+  bb.1:
+    successors: %bb.2(0x04000000), %bb.1(0x7c000000)
+
+    %4:gr64bit = AGRK %1, %2, implicit-def dead $cc
+    %3:gr64bit = AGRK %3, %0, implicit-def dead $cc
+    CGHI %4, 0, implicit-def $cc
+    BRC 14, 6, %bb.1, implicit killed $cc
+    J %bb.2
+
+  bb.2:
+    $r2d = COPY %3
+    Return implicit $r2d
+...
+
+# Don't schedule for LG -> LTH as the LG has a latency of 4 and it would
+# therefore be one cycle faster to scheduler it early and keep the CGHI.
+# TODO: Make sure he LG actually ends up higher as well.
+# CHECK:      name: fun3
+# CHECK:      %6:gr64bit = LG $noreg, 0, $noreg
+# CHECK:      %5:grx32bit = AHIMuxK %4, 1, implicit-def dead $cc
+# CHECK-NEXT: CGHI %6, 0, implicit-def $cc
+---
+name:            fun3
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.2(0x30000000), %bb.1(0x50000000)
+    liveins: $r2l
+
+    %0:gr32bit = COPY $r2l
+    %1:gr32bit = COPY %0
+    %1:gr32bit = OILMux %1, 1, implicit-def dead $cc
+    CHIMux %1, 0, implicit-def $cc
+    %2:gr32bit = LHIMux 0
+    %3:gr32bit = LHIMux 0
+    %3:gr32bit = LOCHIMux %3, 1, 14, 8, implicit killed $cc
+    %0:gr32bit = NILMux %0, 0, implicit-def dead $cc
+    CHIMux %0, 1, implicit-def $cc
+    %2:gr32bit = LOCHIMux %2, 1, 14, 6, implicit killed $cc
+    %4:gr32bit = NRK %3, %2, implicit-def dead $cc
+    %5:grx32bit = AHIMuxK %4, 1, implicit-def dead $cc
+    %6:gr64bit = LG $noreg, 0, $noreg :: (load (s64) from `ptr null`)
+    CGHI %6, 0, implicit-def $cc
+    BRC 14, 8, %bb.2, implicit killed $cc
+    J %bb.1
+
+  bb.1:
+
+  bb.2:
+    $r2l = COPY %5
+    Return implicit $r2l
+...
+
+# The LG is the compare source operand with a latency of 4 - schedule it high but
+# below any clobber of CC.
+# CHECK:      name: fun4
+# CHECK:      %0:addr64bit = COPY $r2d
+# CHECK-NEXT: dead %6:gr64bit = AGRK %0, %0, implicit-def dead $cc
+# CHECK-NEXT: %7:gr64bit = LG %0, 0, $noreg
+# CHECK-NEXT: %1:gr64bit = LGHI 0
+# CHECK-NEXT: dead %8:fp32bit = nofpexcept CELGBR 0, %1, 0, implicit $fpc
+# CHECK-NEXT: dead %2:gr64bit = LGHI 0
+# CHECK-NEXT: dead %3:gr64bit = LGHI 0
+# CHECK-NEXT: dead %4:gr64bit = LGHI 0
+# CHECK-NEXT: dead %5:gr64bit = LGHI 0
+# CHECK-NEXT: CGHI %7, 0, implicit-def $cc
+---
+name:            fun4
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.1(0x50000000), %bb.2(0x30000000)
+    liveins: $r2d
+
+    %0:addr64bit = COPY $r2d
+    %1:gr64bit = LGHI 0
+    %2:gr64bit = LGHI 0
+    %3:gr64bit = LGHI 0
+    %4:gr64bit = LGHI 0
+    %5:gr64bit = LGHI 0
+    %6:gr64bit = AGRK %0, %0, implicit-def dead $cc
+    %7:gr64bit = LG %0, 0, $noreg
+    %8:fp32bit = nofpexcept CELGBR 0, %1, 0, implicit $fpc
+    CGHI %7, 0, implicit-def $cc
+    BRC 14, 12, %bb.2, implicit killed $cc
+    J %bb.1
+
+  bb.1:
+
+  bb.2:
+    Return
+...
+
+# The NG is scheduled right above the CGHI, but the LG still has a greater height
+# than the OILMux, so scheduled LG above it (resetExpectedLatency()).
+# CHECK:      name: fun5
+# CHECK:      %2:gr64bit = LG $noreg, 0, $noreg
+# CHECK-NEXT: dead %0:gr32bit = OILMux %0, 1, implicit-def dead $cc
+# CHECK-NEXT: %2:gr64bit = NG %2, %1, 0, $noreg, implicit-def dead $cc
+# CHECK-NEXT: CGHI %2, 0, implicit-def $cc
+---
+name:            fun5
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r2d, $r3l
+
+    %0:gr32bit = COPY $r3l
+    %1:addr64bit = COPY $r2d
+    %0:gr32bit = OILMux %0, 1, implicit-def dead $cc
+    %2:gr64bit = LG $noreg, 0, $noreg
+    %2:gr64bit = NG %2, %1, 0, $noreg, implicit-def dead $cc
+    CGHI %2, 0, implicit-def $cc
+    %4:addr64bit = LGHI 0
+    %4:addr64bit = LOCGHI %4, 1, 14, 6, implicit killed $cc
+    $r2d = COPY %4
+    Return implicit $r2d
+...

@@ -1,0 +1,44 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+# Test that stores that are not at the bottom (depth-wise) are not rescheduled.
+# CHECK:      name: fun
+# CHECK:      VST32
+# CHECK-NEXT: VST32
+# CHECK-NEXT: VST32
+# CHECK-NEXT: VST32
+# CHECK-NEXT: VST32
+# CHECK-NEXT: VST32
+# CHECK-NEXT: VST32
+# CHECK-NEXT: VST32
+---
+name:            fun
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r2d, $f0s, $r3d, $r4d
+
+    %0:addr64bit = COPY $r4d
+    %1:addr64bit = COPY $r3d
+    %2:fp32bit = COPY $f0s
+    %3:addr64bit = COPY $r2d
+    %4:vr32bit = VL32 %1, 4, $noreg
+
+  bb.1:
+    %5:fp32bit = WFLPSB %2
+    dead %6:fp32bit = nofpexcept LTEBR %5, implicit-def $cc, implicit $fpc
+    %7:grx32bit = LHIMux 0
+    %7:grx32bit = LOCHIMux %7, 1, 15, 2, implicit killed $cc
+    VST32 %2, %3, 0, $noreg
+    VST32 %2, $noreg, 0, $noreg
+    VST32 %2, %1, 0, $noreg
+    VST32 %4, %0, 0, $noreg
+    VST32 %2, %3, 0, $noreg
+    VST32 %2, %1, 0, $noreg
+    VST32 %2, %3, 0, $noreg
+    VST32 %2, %1, 0, $noreg
+    $r2l = COPY %7
+    Return implicit $r2l
+
+...

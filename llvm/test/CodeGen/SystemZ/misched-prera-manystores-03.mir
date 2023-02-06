@@ -1,0 +1,72 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z196 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+# Test that stores in a group are scheduled regardless of making an address
+# register live.
+# CHECK:      name: fun
+# CHECK:      %3{{.*}} LE
+# CHECK-NEXT: %3{{.*}} AEBR
+# CHECK-NEXT: STE %3
+# CHECK-NEXT: %4{{.*}} LE
+# CHECK-NEXT: %4{{.*}} AEBR
+# CHECK-NEXT: STE %4
+# CHECK-NEXT: %5{{.*}} LE
+# CHECK-NEXT: %5{{.*}} AEBR
+# CHECK-NEXT: STE %5
+# CHECK-NEXT: %6{{.*}} LE
+# CHECK-NEXT: %6{{.*}} AEBR
+# CHECK-NEXT: STE %6
+# CHECK-NEXT: %7{{.*}} LE
+# CHECK-NEXT: %7{{.*}} AEBR
+# CHECK-NEXT: STE %7
+# CHECK-NEXT: %8{{.*}} LE
+# CHECK-NEXT: %8{{.*}} AEBR
+# CHECK-NEXT: %OffsReg:addr64bit = LGHI 8
+# CHECK-NEXT: STE %8, %0, 0, %OffsReg
+# CHECK-NEXT: %9{{.*}} LE
+# CHECK-NEXT: %9{{.*}} AEBR
+# CHECK-NEXT: STE %9
+# CHECK-NEXT: %10{{.*}} LE
+# CHECK-NEXT: %10{{.*}} AEBR
+# CHECK-NEXT: STE %10
+# CHECK-NEXT: Return
+--- |
+  define void @fun(ptr noalias %src1, ptr noalias %dest) { ret void }
+...
+---
+name:            fun
+tracksRegLiveness: true
+body:             |
+  bb.0 (%ir-block.0):
+    liveins: $r2d, $r3d
+  
+    %0:addr64bit = COPY $r3d
+    %1:addr64bit = COPY $r2d
+    %OffsReg:addr64bit = LGHI 8
+    %3:fp32bit = LE %1, 28, $noreg :: (load (s32) from %ir.src1 + 28, basealign 64)
+    %4:fp32bit = LE %1, 24, $noreg :: (load (s32) from %ir.src1 + 24, align 8, basealign 64)
+    %5:fp32bit = LE %1, 20, $noreg :: (load (s32) from %ir.src1 + 20, basealign 64)
+    %6:fp32bit = LE %1, 16, $noreg :: (load (s32) from %ir.src1 + 16, align 16, basealign 64)
+    %7:fp32bit = LE %1, 12, $noreg :: (load (s32) from %ir.src1 + 12, basealign 64)
+    %8:fp32bit = LE %1, 8, $noreg :: (load (s32) from %ir.src1 + 8, align 8, basealign 64)
+    %9:fp32bit = LE %1, 4, $noreg :: (load (s32) from %ir.src1 + 4, basealign 64)
+    %10:fp32bit = LE %1, 0, $noreg :: (load (s32) from %ir.src1, align 64)
+    %10:fp32bit = nofpexcept AEBR %10, %10, implicit-def dead $cc, implicit $fpc
+    %9:fp32bit = nofpexcept AEBR %9, %9, implicit-def dead $cc, implicit $fpc
+    %8:fp32bit = nofpexcept AEBR %8, %8, implicit-def dead $cc, implicit $fpc
+    %7:fp32bit = nofpexcept AEBR %7, %7, implicit-def dead $cc, implicit $fpc
+    %6:fp32bit = nofpexcept AEBR %6, %6, implicit-def dead $cc, implicit $fpc
+    %5:fp32bit = nofpexcept AEBR %5, %5, implicit-def dead $cc, implicit $fpc
+    %4:fp32bit = nofpexcept AEBR %4, %4, implicit-def dead $cc, implicit $fpc
+    %3:fp32bit = nofpexcept AEBR %3, %3, implicit-def dead $cc, implicit $fpc
+    STE %3, %0, 28, $noreg :: (store (s32) into %ir.dest + 28, basealign 64)
+    STE %4, %0, 24, $noreg :: (store (s32) into %ir.dest + 24, align 8, basealign 64)
+    STE %5, %0, 20, $noreg :: (store (s32) into %ir.dest + 20, basealign 64)
+    STE %6, %0, 16, $noreg :: (store (s32) into %ir.dest + 16, align 16, basealign 64)
+    STE %7, %0, 12, $noreg :: (store (s32) into %ir.dest + 12, basealign 64)
+    STE %8, %0, 0, %OffsReg :: (store (s32) into %ir.dest + 8, align 8, basealign 64)
+    STE %9, %0, 4, $noreg :: (store (s32) into %ir.dest + 4, basealign 64)
+    STE %10, %0, 0, $noreg :: (store (s32) into %ir.dest, align 64)
+    Return
+
+...

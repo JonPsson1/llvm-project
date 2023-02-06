@@ -6,6 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
+// -------------------------- Pre RA scheduling ----------------------------- //
+//
+//  TODO
+//
 // -------------------------- Post RA scheduling ---------------------------- //
 // SystemZPostRASchedStrategy is a scheduling strategy which is plugged into
 // the MachineScheduler. It has a sorted Available set of SUs and a pickNode()
@@ -15,11 +19,1036 @@
 //===----------------------------------------------------------------------===//
 
 #include "SystemZMachineScheduler.h"
+#include "llvm/CodeGen/LiveInterval.h"
+#include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "machine-scheduler"
+
+/// Pre-RA scheduling ///
+
+// 1e92503 ## GOOD
+static cl::opt<bool> SCHED0("sched0", cl::Hidden, cl::init(false));
+static cl::opt<bool> SCHED1("sched1", cl::Hidden, cl::init(false));
+static cl::opt<bool> SCHED2("sched2", cl::Hidden, cl::init(false));
+static cl::opt<bool> SCHED3("sched3", cl::Hidden, cl::init(false));
+bool SCHED012() { return SCHED0 || SCHED1 || SCHED2; }
+bool SCHED0123() { return SCHED0 || SCHED1 || SCHED2 || SCHED3; }
+static cl::opt<bool> SCHEDELIMCMP("sched-elimcmp", cl::Hidden, cl::init(false));
+static cl::opt<bool> SCHEDPREGCOPYS("sched-pregcopys", cl::Hidden, cl::init(false));
+static cl::opt<unsigned> PREGCUSERS("sched-pregc-users", cl::Hidden, cl::init(2));
+// Value of 2 is needed for at least soft-float-args.ll, but not on benchmarks.
+// So maybe fix that test to have single user..?
+static cl::opt<bool> GENERICSCHED("generic-sched", cl::Hidden, cl::init(false));
+
+static bool hasUsableCCDef(const SUnit *CmpSrcSU, const SUnit *CmpSU,
+                           SmallVector<MachineInstr *, 4> &CCUsers,
+                           const SystemZInstrInfo *TII) {
+  MachineInstr *CmpSrcMI = CmpSrcSU->getInstr();
+  MachineInstr *CmpMI = CmpSU->getInstr();
+
+  if (unsigned ConvOpc = TII->getLoadAndTest(CmpSrcMI->getOpcode()))
+    if (TII->adjustCCMasksForInstr(*CmpSrcMI, *CmpMI, CCUsers,
+                                   ConvOpc, /*DoAdjust=*/false))
+      return true;
+  if (TII->adjustCCMasksForInstr(*CmpSrcMI, *CmpMI, CCUsers,
+                                 /*ConvOpc=*/0, /*DoAdjust=*/false))
+    return true;
+  if (unsigned ConvOpc = TII->getConvertToLogicalOpcode(CmpSrcMI->getOpcode()))
+    if (TII->adjustCCMasksForInstr(*CmpSrcMI, *CmpMI, CCUsers,
+                                   ConvOpc, /*DoAdjust=*/false))
+      return true;
+  return false;
+}
+
+static bool ReadsCC(const MachineInstr *MI) {
+  if (MI->readsRegister(SystemZ::CC, /*TRI=*/nullptr))
+    return true;
+  // SystemZ::CallBCR has CCMaskFirst = 1, but no CC Use
+  unsigned Flags = MI->getDesc().TSFlags;
+  assert(!(Flags & SystemZII::CCMaskFirst) && !(Flags & SystemZII::CCMaskLast)
+         && "MI descriptor seems to be missing the CC use.");
+  return false;
+}
+
+// XXX use MC hasImplitDef
+static bool DefinesCC(const MachineInstr *MI) {
+  return MI->definesRegister(SystemZ::CC, /*TRI=*/nullptr);
+}
+
+// XXX
+static bool TouchesCC(const MachineInstr *MI) {
+  return ReadsCC(MI) || DefinesCC(MI);
+}
+
+static bool isCCLiveAfter(const MachineInstr *MI,
+                          const MachineBasicBlock *MBB) {
+  for (MachineBasicBlock::const_iterator II = std::next(MI->getIterator());
+       II != MBB->end(); ++II) {
+    if (ReadsCC(&*II))
+      return true;
+    if (DefinesCC(&*II))
+      return false;
+  }
+
+  // XXX liveout_iterator?  (also in checkCCKill).
+  for (const MachineBasicBlock *Succ : MBB->successors())
+    if (Succ->isLiveIn(SystemZ::CC))
+      return true;
+
+  return false;
+}
+
+static bool regionHasINLINEASM(ScheduleDAGMILive *DAG) {
+  for (unsigned Idx = 0, End = DAG->SUnits.size(); Idx != End; ++Idx) {
+    const SUnit *SU = &DAG->SUnits[Idx];
+    const MachineInstr *MI = SU->getInstr();
+    if (MI->isInlineAsm() || MI->getOpcode() == SystemZ::EAR)
+      return true;
+  }
+  return false;
+}
+
+void SystemZPreRASchedStrategy::initialize(ScheduleDAGMI *dag) {
+  GenericScheduler::initialize(dag);
+
+  if (PrioRegClasses.empty()) // TODO: Move to constructor.
+    for (const TargetRegisterClass *RC : TRI->regclasses()) {
+      for (MVT VT : MVT::fp_valuetypes())
+        if (TRI->isTypeLegalForClass(*RC, VT)) {
+          PrioRegClasses.insert(RC->getID());
+          break;
+        }
+
+      // On SystemZ vector and FP registers overlap: add any vector RC.
+      if (!PrioRegClasses.count(RC->getID()))
+        for (MVT VT : MVT::fp_fixedlen_vector_valuetypes())
+          if (TRI->isTypeLegalForClass(*RC, VT)) {
+            PrioRegClasses.insert(RC->getID());
+            break;
+          }
+    }
+
+  NumScheduled = 0;
+  DAGHeight = 0;
+  DAGDepth = 0; // same?
+  for (unsigned Idx = 0, End = DAG->SUnits.size(); Idx != End; ++Idx) {
+    DAGHeight = std::max(DAGHeight, DAG->SUnits[Idx].getHeight());
+    DAGDepth = std::max(DAGDepth, DAG->SUnits[Idx].getDepth());
+  }
+  // It seems to work well to include the latencies in this heuristic (as
+  // opposed to something like a "unit DAG height" with all latencies counted
+  // as 1).
+  IsWideDAG = DAG->SUnits.size() >= 3 * std::max(DAGHeight, 1u);
+
+  GenericSched = GENERICSCHED ||  // .getNumOccurrences() ?
+    !DAG->getSchedModel()->hasInstrSchedModel();
+  Bot.InOrderHazardChecks = GenericSched;
+
+  LiveIns.clear();
+  LiveRegs.clear();
+  for (unsigned I = 0, E = DAG->MRI.getNumVirtRegs(); I != E; ++I) {
+    Register VirtReg = Register::index2VirtReg(I);
+    const LiveInterval &LI = DAG->getLIS()->getInterval(VirtReg);
+    LiveQueryResult LRQf =
+      LI.Query(DAG->getLIS()->
+               getInstructionIndex(*DAG->SUnits.front().getInstr()));
+    if (LRQf.valueIn())
+      LiveIns.insert(VirtReg);
+    LiveQueryResult LRQb =
+      LI.Query(DAG->getLIS()->
+               getInstructionIndex(*DAG->SUnits.back().getInstr()));
+    if (LRQb.valueOut())
+      LiveRegs.insert(VirtReg);
+  }
+
+  LLVM_DEBUG( dbgs() << " Live ins at top: ";
+              for (auto Reg : LiveIns)
+                dbgs() << "%" << Reg.virtRegIndex() << ", ";
+              dbgs() << "\n";);
+  LLVM_DEBUG( dbgs() << " Live out at bottom: ";
+              for (auto Reg : LiveRegs)
+                dbgs() << "%" << Reg.virtRegIndex() << ", ";
+              dbgs() << "\n";);
+
+  IsRedefining = std::vector<bool>(DAG->SUnits.size(), false);
+  for (unsigned Idx = 0, End = DAG->SUnits.size(); Idx != End; ++Idx) {
+    const MachineInstr *MI = DAG->SUnits[Idx].getInstr();
+    if (MI->getNumOperands()) {
+      const MachineOperand &DefMO = MI->getOperand(0);
+      if (DefMO.isReg() && DefMO.isDef() && DefMO.getReg().isVirtual()) {
+        const LiveInterval &LI = DAG->getLIS()->getInterval(DefMO.getReg());
+        LiveQueryResult LRQ = LI.Query(DAG->getLIS()->getInstructionIndex(*MI));
+        if(LRQ.valueIn())
+          IsRedefining[Idx] = true;
+      }
+    }
+  }
+
+  // Only chain preds. To stack: Mostly store immediate, but also some
+  // memmoves.  These do not use registers, but if scheduled they can make
+  // more instructions available due to memory deps.
+  HasOnlyChainPreds = std::vector<bool>(DAG->SUnits.size(), false);
+  for (unsigned Idx = 0, End = DAG->SUnits.size(); Idx != End; ++Idx) {
+    const SUnit *SU = &DAG->SUnits[Idx];
+    const MachineInstr *MI = SU->getInstr();
+    bool HasRegOp = false;
+    if (SCHED0) {
+      for (auto &MO : MI->operands())
+        if (MO.isReg()) {
+          HasRegOp = true;
+          break;
+        }
+      HasOnlyChainPreds[Idx] = (!HasRegOp && SU->NumPreds == 0 &&
+                                SU->NumSuccs == 0 && SU->NumPredsLeft > 0);
+      continue;
+    }
+    if (SU->getInstr()->mayStore()) {
+      for (auto &MO : MI->operands())
+        if (MO.isReg() && MO.getReg() &&
+            (MO.readsReg() || (MO.isDef() && !MO.isDead())) &&
+            (MO.getReg().isVirtual() || DAG->MRI.isAllocatable(MO.getReg()))) {
+          HasRegOp = true;
+          break;
+        }
+      bool HasChainPred = false;
+      for (const SDep &Pred : SU->Preds)
+        if (Pred.getKind() == SDep::Order && !Pred.getSUnit()->isBoundaryNode()) {
+          HasChainPred = true;
+          break;
+        }
+      HasOnlyChainPreds[Idx] = !HasRegOp && HasChainPred;
+    }
+  }
+
+  // Handling of stores at bottom.
+  ScheduledStoreDepth = ~0U;
+  ScheduledStoreOpcode = ~0U;
+  CurrentStores.clear();
+  StoresInBottom.clear();
+  FirstBottomStoreScheduled = false;
+  unsigned CurrMaxDepth = 0;
+  unsigned StoresDepth = 0;
+  //  unsigned StoresOpcode = 0;
+  for (unsigned Idx = DAG->SUnits.size() - 1; Idx + 1 != 0; --Idx) { // XXX slow
+    const SUnit *SU = &DAG->SUnits[Idx];
+    const MachineInstr *MI = SU->getInstr();
+    if (!MI->getNumOperands() || MI->isCopy())
+      continue;
+    bool HasExplDef = false;
+    bool HasVirtUse = false;
+    for (unsigned I = 0, E = MI->getNumOperands();
+         I != E && I < MI->getDesc().getNumOperands();
+         ++I) {
+      const MachineOperand &MO = MI->getOperand(I);
+      if (!MO.isReg() || MO.isImplicit())
+        continue;
+      if (MO.isDef() && !MO.isDead())
+        HasExplDef = true;
+      if (MO.isUse() && MO.getReg() && MO.readsReg() &&
+          MI->getDesc().operands()[I].OperandType != MCOI::OPERAND_MEMORY)
+        HasVirtUse = true;
+    }
+    bool IsStore = !HasExplDef && HasVirtUse;
+    if (IsStore) {
+      if (SU->getDepth() > CurrMaxDepth) {
+        StoresInBottom.insert(SU);
+        StoresDepth = SU->getDepth();
+        //        StoresOpcode = MI->getOpcode();
+      } else {
+        if (SU->getDepth() == StoresDepth)
+          //            MI->getOpcode() == StoresOpcode)
+          StoresInBottom.insert(SU);
+      }
+    }
+    CurrMaxDepth = std::max(CurrMaxDepth, SU->getDepth());
+  }
+
+  if (StoresInBottom.size() == 1)
+    StoresInBottom.clear();
+  if (StoresInBottom.size() > 1) {
+    std::multiset<unsigned> ByDepths;
+    for (auto &SU : StoresInBottom)
+      ByDepths.insert(SU->getDepth());
+    unsigned LastBD = *ByDepths.rbegin();
+    for (unsigned i = 0; i <= LastBD; ++i)
+      if (ByDepths.count(i) == 1)
+        ByDepths.erase(i);
+    std::set<const SUnit*> ToErase;
+    for (auto SU : StoresInBottom)
+      if (ByDepths.count(SU->getDepth()) == 0)
+        ToErase.insert(SU);
+    for (auto SU : ToErase)
+      StoresInBottom.erase(SU);
+    assert(StoresInBottom.size() == ByDepths.size());
+    if (StoresInBottom.size() == 1)
+      StoresInBottom.clear();
+
+    if (StoresInBottom.size() > 1) {
+      std::set<unsigned> ByNodeNums;
+      for (auto &SU : StoresInBottom)
+        ByNodeNums.insert(SU->NodeNum);
+
+      bool SingleDepth = (ByDepths.count(*ByDepths.rbegin()) == ByDepths.size());
+      // bool Sequence = true;
+      // for (std::multiset<unsigned>::iterator Itr = ByNodeNums.begin();; Itr++) {
+      //   if (std::next(Itr) != ByNodeNums.end()) {
+      //     if (*Itr + 1 != *(std::next(Itr))) {
+      //       Sequence = false;
+      //       break;
+      //     }
+      //   }
+      //   else
+      //     break;
+      // }
+
+      unsigned Opc = (*StoresInBottom.begin())->getInstr()->getOpcode();
+      bool SingleOpc = true;
+      for (auto SU : StoresInBottom)
+        if (SU->getInstr()->getOpcode() != Opc) {
+          SingleOpc = false;
+          break;
+        }
+
+      // dbgs() << "STORES: " << StoresInBottom.size()
+      //        << " DAG:" << DAG->SUnits.size()
+      //        << " Depths: ";
+      // if (SingleDepth)
+      //   dbgs() << " SINGLEDEPTH: " << *ByDepths.rbegin();
+      // else {
+      //   for (auto D : ByDepths)
+      //     dbgs() << D << " ";
+      // }
+      // dbgs() << " NodeNums: ";
+      // for (auto N : ByNodeNums)
+      //   dbgs() << N << " ";
+      // if (Sequence)
+      //   dbgs() << "SEQ";
+      // dbgs() << " MaxD:" << CurrMaxDepth;
+      // if (CurrMaxDepth == StoresDepth)
+      //   dbgs() << " STORESMAXDEPTH";
+      // if (SingleOpc)
+      //   dbgs() << " SINGLEOPC";
+      // dbgs() << "\n";
+
+      // Value of 8 handles a known regression (with group of 20). TODO: Is 4
+      // or 6 slightly better, perhaps?
+      if (!SingleDepth || !SingleOpc || CurrMaxDepth != StoresDepth ||
+          StoresInBottom.size() < 8)
+        StoresInBottom.clear();
+    }
+  }
+
+  // Cmp / CmpSrc
+  const SystemZInstrInfo *TII = static_cast<const SystemZInstrInfo *>(DAG->TII);
+  unsigned DAGSize = DAG->SUnits.size();
+
+  // Handle bottom of region which could have an ExitSU. MBB could have a
+  // live-out CC value.
+  SUnit *LastSU = &DAG->SUnits[DAGSize - 1];
+  MachineInstr *LastMI = LastSU->getInstr();
+  const MachineBasicBlock *MBB = LastMI->getParent();
+
+  SmallVector<MachineInstr *, 4> CCUsers;
+  unsigned Idx = DAGSize - 1;
+  if (MachineInstr *ExitMI = DAG->ExitSU.getInstr())
+    LastMI = ExitMI;
+  else {
+    assert(LastMI == &MBB->instr_back());
+    assert(!LastMI->isTerminator() && !LastMI->isBranch() && !LastMI->isCall());
+  }
+  bool CompleteCCUsers = true;
+  if (!DefinesCC(LastMI) && isCCLiveAfter(LastMI, MBB))
+    CompleteCCUsers = false;
+  else if (ReadsCC(LastMI))
+    CCUsers.push_back(LastMI);
+  if (!CompleteCCUsers)
+    for (; Idx + 1 != 0; --Idx) {
+      SUnit *SU = &DAG->SUnits[Idx];
+      if (DefinesCC(SU->getInstr())) {
+        if (TII->isCompareZero(*SU->getInstr()))
+          --Idx;
+        break;
+      }
+    }
+
+  Cmp2Src.clear();
+  for (;Idx + 1 != 0; --Idx) {
+    SUnit *SU = &DAG->SUnits[Idx];
+    MachineInstr *MI = SU->getInstr();
+    if (TII->isCompareZero(*MI)) {
+      assert(!CCUsers.empty() && "Cmp should have at least one CC user.");
+      SUnit *SrcSU = nullptr; // Src could be live-in.
+      for (const SDep &Pred : SU->Preds)
+        if (Pred.getKind() == SDep::Data) {
+          assert(Pred.getReg() == TII->getCompareSourceReg(*MI) &&
+                 "CmpSU data-edge should reflect its source register.");
+          SrcSU = Pred.getSUnit();
+        }
+      if (SrcSU && hasUsableCCDef(SrcSU, SU, CCUsers, TII))
+        Cmp2Src[SU] = SrcSU;
+      CCUsers.clear();
+      continue;
+    }
+    if (DefinesCC(MI))
+      CCUsers.clear();
+    if (ReadsCC(MI))
+      CCUsers.push_back(MI);
+  }
+
+  CmpSrcSU = nullptr;
+  CmpSrcPref = 0;
+  CmpSrcNext = false;
+
+  // Phys-reg COPYs
+  PREGSuccs.clear();
+  PRegUser2UsersGroup.clear();
+  std::map<Register, std::vector<const SUnit *> > SrcPReg2Users;
+  std::map<Register, const SUnit *> DstPReg2Def;
+  for (unsigned Idx = 0, End = DAG->SUnits.size(); Idx != End; ++Idx) {
+    const SUnit *SU = &DAG->SUnits[Idx];
+    const MachineInstr *MI = SU->getInstr();
+    assert(!MI->isCall() && "Expected to treat calls as scheduling boundaries.");
+
+    if (MI->isCopy()) {
+      Register DstReg = MI->getOperand(0).getReg();
+      Register SrcReg = MI->getOperand(1).getReg();
+      if (Register::isPhysicalRegister(SrcReg) &&
+          DAG->MRI.isAllocatable(SrcReg)) {             // vreg = COPY PREG
+        assert(Register::isVirtualRegister(DstReg));
+        if (LiveRegs.count(DstReg)) // Live out of region.
+          continue;
+        std::set<const SUnit *> DataSuccs; // XXX needed?
+        for (const SDep &Succ : SU->Succs)
+          if (Succ.getKind() == SDep::Data) {
+            assert(Succ.getReg() == DstReg);
+            DataSuccs.insert(Succ.getSUnit());
+          }
+        if (DataSuccs.size() == 0) {
+          //          assert(MI->getOperand(0).getSubReg()); // rare
+          continue;
+        }
+        assert(SrcPReg2Users.find(SrcReg) == SrcPReg2Users.end() ||
+               regionHasINLINEASM(DAG));
+        for (auto *SU : DataSuccs)
+          SrcPReg2Users[SrcReg].push_back(SU);
+      }
+      else if (Register::isPhysicalRegister(DstReg) &&
+               DAG->MRI.isAllocatable(DstReg)) {        // PREG = COPY vreg
+        // assert(Register::isVirtualRegister(SrcReg));
+        // can be two pregs, e.g. with @llvm.read_register.i64 XXX Bail instead
+        const SUnit *VRegDefSU = nullptr;
+        for (const SDep &Pred : SU->Preds)
+          if (Pred.getKind() == SDep::Data) {
+            assert(VRegDefSU == nullptr);
+            VRegDefSU = Pred.getSUnit();
+          }
+        if (!VRegDefSU) // Live into region.
+          continue;
+        assert(DstPReg2Def.find(DstReg) == DstPReg2Def.end() ||
+               regionHasINLINEASM(DAG));
+
+        DstPReg2Def[DstReg] = VRegDefSU;
+      }
+      continue;
+    }
+  }
+  
+  for (auto II : SrcPReg2Users) {
+    Register PReg = II.first;
+    std::vector<const SUnit *> &PRegUsers = II.second;
+    if (PRegUsers.size() > PREGCUSERS)
+      continue;
+
+    bool UserIsCopyToPReg = false;
+    for (auto *User : PRegUsers)
+      if (User->getInstr()->isCopy() &&
+          Register::isPhysicalRegister(User->getInstr()->getOperand(0).getReg())) {
+        UserIsCopyToPReg = true;
+        break;
+      }
+    if (UserIsCopyToPReg)
+      continue;
+
+    if (DstPReg2Def.find(PReg) != DstPReg2Def.end()) {
+      const SUnit *PRegDef = DstPReg2Def[PReg];
+      if (PRegDef->getInstr()->isCopy() &&
+          Register::isPhysicalRegister(PRegDef->getInstr()->getOperand(1).getReg()))
+        continue;
+      for (auto *PRegUser : PRegUsers) {
+        if (PRegDef->NodeNum == PRegUser->NodeNum)
+          continue;
+        PREGSuccs[PRegUser] = PRegDef;
+        if (PRegUsers.size() > 1)
+          for (auto *User : PRegUsers)
+            PRegUser2UsersGroup[PRegUser].push_back(User);
+      }
+      // dbgs() << "USEDEFSEQ: " << PRegDef->NodeNum << " -> " << PRegUsers.front()->NodeNum
+      //        << " DAGSize: " << DAG->SUnits.size()
+      //        << " NumUsers: " << PRegUsers.size()
+      //        << "\n";
+    }
+  }
+}
+
+// Returns false if a reached successor clobbers CC.
+static bool findSuccs(const SUnit *RootSU,
+                      const SUnit *CmpSU,
+                      const SUnit *SU,
+                      std::set<const SUnit *> &Succs) {
+  // XXX respect weak edges?
+  if (SU != RootSU) {
+    if (SU->isScheduled)
+      return true;
+    if (SU->getInstr()->definesRegister(SystemZ::CC, /*TRI=*/nullptr))
+      return false;
+    if (!Succs.insert(SU).second)
+      return true;
+  }
+  for (const SDep &Succ : SU->Succs) {
+    const SUnit *SuccSU = Succ.getSUnit();
+    if (!SuccSU->isBoundaryNode() && SuccSU != CmpSU &&
+        !findSuccs(nullptr, CmpSU, SuccSU, Succs))
+      return false;
+  }
+  return true;
+}
+
+static void findPreds(const SUnit *RootSU,
+                      const SUnit *SU,
+                      std::set<const SUnit *> &Preds) {
+  // XXX respect weak edges?
+  if (SU->isScheduled /*weak dependency*/)
+    return;
+  if (SU != RootSU && !Preds.insert(SU).second)
+    return;
+  for (const SDep &Pred : SU->Preds)
+    if (!Pred.getSUnit()->isBoundaryNode())
+      findPreds(nullptr, Pred.getSUnit(), Preds);
+}
+
+unsigned getNumInstrsFromUser(const SUnit *CmpSU) {
+  const MachineInstr *CmpMI = CmpSU->getInstr();
+  const MachineBasicBlock *MBB = CmpMI->getParent();
+  unsigned Num = 0;
+  MachineBasicBlock::const_iterator II = std::next(CmpMI->getIterator());
+  assert(II != MBB->end());
+  while (II != MBB->end()) {
+    assert(!DefinesCC(&*II));
+    if (ReadsCC(&*II))
+      return Num;
+    Num++;
+    II++;
+  }
+  llvm_unreachable("CC User not found.");
+  return 0;
+}
+
+bool SystemZPreRASchedStrategy::checkCmpSrcForCmpElim(SUnit *CmpSU) {
+  CmpSrcSU = nullptr;
+  CmpSrcPref = 0;
+  CmpSrcNext = false;
+
+  SUnit *SrcSU = Cmp2Src[CmpSU];
+  // bool HasOneUse = true;
+  // for (const SDep &Succ : SrcSU->Succs)
+  //   if (Succ.getKind() == SDep::Data && Succ.getSUnit() != CmpSU)
+  //     HasOneUse = false;
+  // dbgs() << "COMPARE-0: " << DAG->TII->getName(CmpSU->getInstr()->getOpcode())
+  //        << " " << DAG->TII->getName(SrcSU->getInstr()->getOpcode())
+  //        << " DAGSize: " << DAG->SUnits.size()
+  //        << " NumLeft: " << DAG->SUnits.size() - NumScheduled
+  //        << (HasOneUse ? " HASONEUSE" : " MULTPLEUSES");
+
+  unsigned IssueW = DAG->getSchedModel()->getIssueWidth();
+  unsigned NumLeft = DAG->SUnits.size() - NumScheduled;
+  const unsigned TopRegion = 3;  // XXX 5?
+  if (NumLeft <= TopRegion * IssueW) {
+    // In-order heuristic for top of (/small) region.
+
+    std::set<const SUnit *> Succs;
+    if (!findSuccs(SrcSU, CmpSU, SrcSU, Succs)) {
+      //      dbgs() << " SUCC-CC\n";
+      return false;
+    }
+
+    std::set<const SUnit *> Preds;
+    findPreds(SrcSU, SrcSU, Preds);
+    unsigned NumPreExistingPreds = Preds.size();
+    for (unsigned Idx = DAG->SUnits.size() - 1; Idx + 1 != 0; --Idx) { // XXX slow
+      SUnit *SU = &DAG->SUnits[Idx];
+      if (SU->isScheduled || SU == SrcSU || Succs.count(SU) ||
+          Preds.count(SU) || SU == CmpSU)
+        continue;
+      if (TouchesCC(SU->getInstr()))
+        findPreds(nullptr, SU, Preds);
+    }
+    unsigned BestCycle0 = NumPreExistingPreds / IssueW;
+    unsigned BestCycle1 = Preds.size() / IssueW;
+    assert(BestCycle1 >= BestCycle0);
+    unsigned CyclesLost = std::min(BestCycle1 - BestCycle0,
+                                   uint32_t(SrcSU->Latency));
+
+    unsigned CyclesSaved = 0;
+    unsigned NoCmpSuccHeight = 0;
+    for (const SDep &Succ : SrcSU->Succs)
+      if (Succ.getSUnit() != CmpSU)
+        NoCmpSuccHeight = std::max(NoCmpSuccHeight, Succ.getSUnit()->getHeight());
+    if (NoCmpSuccHeight < CmpSU->getHeight())
+      CyclesSaved = std::min(uint32_t(CmpSU->Latency),
+                             CmpSU->getHeight() - NoCmpSuccHeight);
+
+    // unsigned CmpCycle = NumLeft / IssueW;
+    // unsigned Stall0 = 0;
+    // if (SrcSU->Latency > CmpCycle - BestCycle0)
+    //   Stall0 = SrcSU->Latency - (CmpCycle - BestCycle0);
+    // unsigned Stall1 = 0;
+    // if (SrcSU->Latency > (CmpCycle - BestCycle1) + CyclesSaved)
+    //   Stall1 = SrcSU->Latency - (CmpCycle - BestCycle1 + CyclesSaved);
+    // bool Check1 = (Stall1 <= Stall0);
+
+    bool Check0 = (CyclesLost <= CyclesSaved);
+
+    // dbgs() << " CmpSrcHeight: " << SrcSU->getHeight()
+    //        << " NoCmpSuccHeight: " << NoCmpSuccHeight
+    //        << " NumPreExistingPreds: " << NumPreExistingPreds
+    //        << " NumResultingPreds: " << Preds.size()
+    //        << (Check0 ? " CHECK0" : "")
+    //        << (Check1 ? " CHECK1" : "");
+
+    // Adjust schedule for the compare only if no any additional stall results.
+    // Assuming a converted CmpSrc will have same latency.  TODO: Use CmpSrcPref
+    // also without comparison elim (see also computeSULivenessScore)?
+    if (Check0) {
+      CmpSrcSU = SrcSU;
+      if (SrcSU->Latency > CmpSU->Latency)
+        CmpSrcPref = std::min((SrcSU->Latency - CmpSU->Latency) * IssueW,
+                              NumLeft);
+      // unsigned NumInstrsFromUser = getNumInstrsFromUser(CmpSU);
+      // if (SrcSU->Latency * IssueW > NumInstrsFromUser)
+      //   CmpSrcPref = std::min((SrcSU->Latency * IssueW) - NumInstrsFromUser,
+      //                         NumLeft);
+      // dbgs() << " In-order Pref: " << CmpSrcPref << "\n";
+      return true;
+    } else
+      assert(NumLeft > 2 * IssueW || NoCmpSuccHeight == CmpSU->getHeight());
+  } else {
+    // Out-of-order heuristic with many instructions left to schedule.
+    // const unsigned TopMargin = 2;
+
+    // if (NumLeft >= (TopMargin + SrcSU->Latency - 1) * IssueW) {
+    //   CmpSrcSU = SrcSU;
+    //   CmpSrcNext = true;
+    // dbgs() << " Out-of-order" << "\n";
+      // return true;
+      // }
+  }
+//  dbgs() << " Skipped\n";
+
+  return false;
+}
+
+void SystemZPreRASchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
+  unsigned ExpectedLatencyIn = Bot.getExpectedLatency();
+  GenericScheduler::schedNode(SU, IsTopNode);
+
+  LLVM_DEBUG( dbgs() << "Live regs was: ";
+              for (auto R : LiveRegs)
+                dbgs() << "%" << R.virtRegIndex() << ", ";
+              dbgs() << "\n";);
+
+  if (CurrentStores.count(SU) && SU->getDepth() > Bot.getDependentLatency()) {
+    ScheduledStoreDepth = SU->getDepth();
+    ScheduledStoreOpcode = SU->getInstr()->getOpcode();
+  }
+  CurrentStores.clear();
+  if (!FirstBottomStoreScheduled && StoresInBottom.count(SU))
+    FirstBottomStoreScheduled = true;
+
+  MachineInstr *MI = SU->getInstr();
+  for (auto &MO : MI->operands())
+    if (MO.isReg() && MO.getReg() && !MO.isImplicit() &&
+        Register::isVirtualRegister(MO.getReg())) {
+      if (MO.isDef()) {  // XXX there are implicit uses of vreg:subreg, so the subreg def may not be live:
+        assert(LiveRegs.count(MO.getReg()) || MO.isDead() || MO.getSubReg());
+        if (!IsRedefining[SU->NodeNum])
+          LiveRegs.erase(MO.getReg());
+      }
+      else if (MO.readsReg())
+        LiveRegs.insert(MO.getReg());
+    }
+  ++NumScheduled;
+
+  if (SCHEDELIMCMP) {
+    if (Cmp2Src.count(SU)) // A Cmp was just scheduled.
+      checkCmpSrcForCmpElim(SU);
+    else if (SU == CmpSrcSU) { // CmpSrc was just scheduled.
+      CmpSrcSU = nullptr;
+      // Moving the CmpSrcSU around normal heuristics should affect other nodes
+      // as little as possible.
+      if (CmpSrcPref) {
+        Bot.resetExpectedLatency(ExpectedLatencyIn);
+        CmpSrcPref = 0;
+      }
+      if (CmpSrcNext) {
+        Bot.resetExpectedLatency(ExpectedLatencyIn);
+        CmpSrcNext = false;
+      }
+    }
+    else if (TouchesCC(MI)) { // Any other instruction that uses/defs CC.
+      CmpSrcSU = nullptr;
+      CmpSrcPref = 0;
+      CmpSrcNext = false;
+    }
+    else if (CmpSrcPref > 0)
+      --CmpSrcPref;
+  }
+
+  auto II = PREGSuccs.find(SU);
+  if (II == PREGSuccs.end())
+    return;
+
+  // auto GItr = PRegUser2UsersGroup.find(SU);
+  // unsigned GroupSize = (GItr != PRegUser2UsersGroup.end()) ? GItr->second.size() : 1;
+  // const SUnit *PRegDefSU = II->second;
+  // dbgs() << "SCHEDNODEPREGSSUCCS: GroupSize " << GroupSize;
+  // dbgs() << (PRegDefSU->isScheduled ? " DEFSCHEDULED" : " DEFINTERF");
+  // if (GItr != PRegUser2UsersGroup.end()) {
+  //   const std::vector<const SUnit*> &UserGroup = GItr->second;
+  //   unsigned NumScheduled = 0;
+  //   for (auto *User : UserGroup)
+  //     if (User == SU || User->isScheduled)
+  //       NumScheduled++;
+    // bool AllScheduled = (NumScheduled == GroupSize);
+    // if (NumScheduled == 1)
+    //   dbgs() << " FIRSTUSER";
+    // else
+    //   dbgs() << (AllScheduled ? " ALLUSERSSCHED" : " UNSCHEDULEDUSERS");
+  // } else
+  //   dbgs() << " ONEUSER";
+  // dbgs() << "\n";
+}
+
+// All MIs that define a phys-reg seem to (typically/all) not have any
+// register uses and return true here.
+bool isImmLoadLike(const MachineInstr *MI) {
+  if (SCHED0 && MI->isMoveImmediate())
+    return true;
+  for (unsigned I = 1, E = MI->getNumOperands(); I != E; ++I) {
+    const MachineOperand &Op = MI->getOperand(I);
+    if (Op.isReg() && Op.getReg())
+      // Seems to be no need to check implicit physreg def (overlapping
+      // explicit def), or if a physreg is not allocatable (like CC).
+      return false;
+  }
+  // Load Address (stack) / load immediate
+  return true;
+}
+
+static int biasPhysRegExtra(const SUnit *SU, bool isTop) {
+  if (int Res = biasPhysReg(SU, isTop))
+    return Res;
+
+  // Load Address (stack) (load immediate recognized in biasPhysReg).
+  if (!SCHED0 && !SCHED1) {
+    const MachineInstr *MI = SU->getInstr();
+    if (MI->getNumOperands() && !MI->isCopy()) {
+      const MachineOperand &DefMO = MI->getOperand(0);
+      if (DefMO.isReg() && DefMO.isDef() && DefMO.getReg().isPhysical()) {
+        bool DoBias = true;
+        for (unsigned I = 1, E = MI->getNumOperands(); I != E; ++I) {
+          const MachineOperand &Op = MI->getOperand(I);
+          if (Op.isReg() && Op.getReg()) {
+            DoBias = false;
+            break;
+          }
+        }
+        if (DoBias)
+          return isTop ? -1 : 1;
+      }
+    }
+  }
+
+  return 0;
+}
+
+int SystemZPreRASchedStrategy::
+computeSULivenessScore(SchedCandidate &C, ScheduleDAGMILive *DAG,
+                       SchedBoundary *Zone) const {
+  const SUnit *SU = C.SU;
+  const MachineInstr *MI = SU->getInstr();
+  if (!MI->getNumOperands() || MI->isCopy())
+    return 0;
+  const MachineOperand &DefMO = MI->getOperand(0);
+  bool IsLoad = DefMO.isReg() && DefMO.isDef() &&   // XXX ADDREGS not checked for.
+    (SCHED012() || !DefMO.isDead()) && !IsRedefining[SU->NodeNum];
+  bool IsPrioDef = IsLoad && isPrioVirtReg(DefMO.getReg(), &DAG->MRI);
+  unsigned NonLiveUsesPrio = 0;
+  unsigned NonLiveUsesAny = 0;
+  bool IsStore = (!DefMO.isReg() ||
+                  (SCHED012() && !isPrioVirtReg(DefMO.getReg(), &DAG->MRI)) ||
+                  !DefMO.isDef() || DefMO.isDead());
+  unsigned PrioStoreKills = 0;
+  unsigned GPRStoreKills = 0;
+  bool HasPrioUse = false;
+  for (unsigned I = 0, E = MI->getNumOperands();
+       I != E && I < MI->getDesc().getNumOperands();
+       ++I) {
+    const MachineOperand &MO = MI->getOperand(I);
+    if (!MO.isReg() || !MO.isUse() || !MO.readsReg())
+      continue;
+    if (IsLoad && I > 0 &&
+        (MO.getReg().isVirtual() || SCHED0)) {
+      bool AllowLiveReg = false;
+      if (LiveRegs.count(MO.getReg())) {
+        if (SCHED1 || SCHED0) {
+          if (!LiveIns.count(MO.getReg()))
+            AllowLiveReg = true;
+        } else
+          AllowLiveReg = true;
+      }
+      if (!AllowLiveReg) {
+        NonLiveUsesAny++;
+        bool AllowUse = false;
+        if (SCHED0 &&
+            (I >= MI->getNumExplicitOperands() ||
+             MI->getDesc().operands()[I].OperandType == MCOI::OPERAND_MEMORY))
+          AllowUse = true;
+        // Care more about FP: for an FP def, only care about FP uses.
+        if (IsPrioDef && !isPrioVirtReg(MO.getReg(), &DAG->MRI))
+          AllowUse = true;
+        if (!AllowUse)
+          NonLiveUsesPrio++;
+      }
+    }
+
+    if (isPrioVirtReg(MO.getReg(), &DAG->MRI)) {
+      if (SCHED012()) {
+        const LiveInterval &LI = DAG->getLIS()->getInterval(MO.getReg());
+        LiveQueryResult LRQ = LI.Query(DAG->getLIS()->getInstructionIndex(*MI));
+        if (!LRQ.valueOut())
+          PrioStoreKills++;
+      } else {
+        HasPrioUse = true;
+        if (!LiveRegs.count(MO.getReg()))
+          PrioStoreKills++;
+      }
+    } else if (!SCHED0123() && MO.getReg().isVirtual()) {
+      if (MI->getDesc().operands()[I].OperandType != MCOI::OPERAND_MEMORY)
+        if (!LiveRegs.count(MO.getReg()))  // XXX Wrap with assert for virtual.
+          GPRStoreKills++;
+    }
+  }
+
+  bool PreservesSchedLat = SU->getHeight() <= Zone->getScheduledLatency();
+  unsigned NumLeft = DAG->SUnits.size() - NumScheduled;
+  const unsigned TopMargin = 2;
+  unsigned Margin = SchedModel->getIssueWidth() * (TopMargin + SU->Latency - 1);
+  bool DistToTop = NumLeft > Margin;
+  if (SCHED0 || SCHED1)
+    DistToTop = NumLeft > SchedModel->getIssueWidth() * SU->Latency;
+  IsStore &= (PrioStoreKills > 0 || (!HasPrioUse && GPRStoreKills > 0));
+  if (IsStore)
+    CurrentStores.insert(SU);
+
+  bool AllUsesLive = (NonLiveUsesAny == 0);
+  if (DefMO.isReg() && DefMO.isDef() &&
+      Register::isPhysicalRegister(DefMO.getReg())) {
+    if (SCHED0) {
+      return ((PreservesSchedLat || (DistToTop && AllUsesLive)) &&
+              isImmLoadLike(MI)) ? -1 : 0;
+    }
+    if (SCHED1)
+      return ((PreservesSchedLat || DistToTop) && isImmLoadLike(MI)) ? -1 : 0;
+    llvm_unreachable("Did not expect physreg def!");
+  }
+
+  bool UsesLive = (NonLiveUsesPrio == 0);
+
+  // Schedule SU next if all (prioritized) uses are already live and the
+  // scheduled latency is not increased.
+  if (PreservesSchedLat && UsesLive)
+    ;
+  // If there will be relatively many SUs scheduled above this one it should
+  // not be a problem to increase the scheduled latency given the OOO
+  // execution. Seems best to demand all regs to be live here.  TODO: Close
+  // to the top maybe schedule (>1 latency) loads higher, even?
+  else if (DistToTop && AllUsesLive)
+    ;
+  else
+    IsLoad = false;
+
+  // This handles regions with many chained stores of the same depth at the
+  // bottom in the input order (cactus).
+  // TODO:
+  // - Currently avoiding DefMO (it may be that there are two non-live uses).
+  // - Experiment further: use RemLatency/Depth with single stores?
+  // - check if there are (many) chain-only-pred(s) waiting on just SU?
+  //   Maybe scheduling SU would allow scheduling predecessor load(s).
+  // - Schedule stores of live-though regs early (low)?
+  if (SCHED0123())
+    IsStore &= SU->getDepth() == Zone->getDependentLatency();
+  else {
+    // IsStore &= SU->getDepth() == ScheduledStoreDepth;
+    // IsStore &= SU->getInstr()->getOpcode() == ScheduledStoreOpcode;
+    IsStore &= FirstBottomStoreScheduled && StoresInBottom.count(SU);
+  }
+
+  // TODO: Would it give further benefits to schedule small subtrees as a
+  // unit when this would reduce register pressure?
+  if (IsLoad)
+    return -1;
+
+  if (IsStore)
+    return 1;
+
+  return 0;
+}
+
+bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
+                                             SchedCandidate &TryCand,
+                                             SchedBoundary *Zone) const {
+  assert(Zone && !Zone->isTop() && "Bottom-Up scheduling only.");
+
+  if (GenericSched)
+    return GenericScheduler::tryCandidate(Cand, TryCand, Zone);
+
+  // Initialize the candidate if needed. (From GenericScheduler)
+  if (!Cand.isValid()) {
+    TryCand.Reason = NodeOrder;
+    return true;
+  }
+
+  if (!SCHED0) {
+    // Bias PhysReg Defs and copies to their uses and defined respectively.
+    if (tryGreater(biasPhysRegExtra(TryCand.SU, TryCand.AtTop),
+                   biasPhysRegExtra(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+      return TryCand.Reason != NoCand;
+
+    bool SkipPhysRegs = biasPhysRegExtra(TryCand.SU, TryCand.AtTop) &&
+      biasPhysRegExtra(Cand.SU, TryCand.AtTop);
+    if (SkipPhysRegs) { // Both biased same way.  XXX worthwhile?  Whatif one long-latency...
+      tryGreater(TryCand.SU->NodeNum, Cand.SU->NodeNum, TryCand, Cand,
+                 NodeOrder);
+      return TryCand.Reason != NoCand;
+    }
+  }
+
+  if (tryGreater(HasOnlyChainPreds[TryCand.SU->NodeNum],  // XXX worthwhile?
+                 HasOnlyChainPreds[Cand.SU->NodeNum],
+                 TryCand, Cand, ChainReduce))
+    return TryCand.Reason != NoCand;
+
+  int TryCandScore = computeSULivenessScore(TryCand, DAG, Zone);
+  int CandScore = computeSULivenessScore(Cand, DAG, Zone);
+  if (tryLess(TryCandScore, CandScore, TryCand, Cand, LivenessReduce))
+    return TryCand.Reason != NoCand;
+
+  unsigned RemLat = computeRemLatency(*Zone);  // XXX expensive
+  if (SCHED0) {
+    unsigned DepLat = Zone->getDependentLatency();
+    if (DepLat == 0)
+      DepLat = DAGDepth;
+    RemLat = DepLat;
+  }
+
+  if (SCHEDELIMCMP) {
+    if (CmpSrcSU) {
+      bool TryCandCmpSrc =
+        (TryCand.SU == CmpSrcSU && TouchesCC(Cand.SU->getInstr()));
+      bool CandCmpSrc =
+        (Cand.SU == CmpSrcSU && TouchesCC(TryCand.SU->getInstr()));
+      if (TryCandCmpSrc || CandCmpSrc) {              // CmpSrc <> Clob-CC
+        assert(TryCandCmpSrc != CandCmpSrc);
+        tryGreater(TryCandCmpSrc, CandCmpSrc, TryCand, Cand,
+                   GenericSchedulerBase::CmpCC);
+        return TryCand.Reason != NoCand;
+      }
+      if (CmpSrcPref) {                               // CmpSrc <> NoClob-CC
+        bool TryCandCmpSrc = TryCand.SU == CmpSrcSU;
+        bool CandCmpSrc = Cand.SU == CmpSrcSU;
+        if (TryCandCmpSrc || CandCmpSrc) {
+          assert(TryCandCmpSrc != CandCmpSrc);
+          tryLess(TryCandCmpSrc, CandCmpSrc, TryCand, Cand,
+                  GenericSchedulerBase::CmpCC);
+          return TryCand.Reason != NoCand;
+        }
+      }
+      if (tryLess(TouchesCC(TryCand.SU->getInstr()),  // Clob-CC <> NoClob-CC
+                  TouchesCC(Cand.SU->getInstr()), TryCand, Cand,
+                  GenericSchedulerBase::CmpCC))
+        return TryCand.Reason != NoCand;
+    }
+    else if (CmpSrcNext) {
+      bool TryCandCmpSrc = TryCand.SU == CmpSrcSU;
+      bool CandCmpSrc = Cand.SU == CmpSrcSU;
+      tryGreater(TryCandCmpSrc, CandCmpSrc, TryCand, Cand,
+                 GenericSchedulerBase::CmpCC);
+      return TryCand.Reason != NoCand;
+    }
+  }
+
+  if (SCHEDPREGCOPYS) {
+    unsigned TryPREGSuccsLeft = getPREGSuccsLeft(TryCand.SU);
+    unsigned PREGSuccsLeft = getPREGSuccsLeft(Cand.SU);
+    if (tryLess(TryPREGSuccsLeft, PREGSuccsLeft, TryCand, Cand, Weak))
+      return TryCand.Reason != NoCand;
+  }
+
+  if ((std::max(TryCand.SU->getHeight(), Cand.SU->getHeight()) >
+       Zone->getScheduledLatency())) {
+    bool OtherSUOnCritPath =
+      (((TryCand.SU->getHeight() < Cand.SU->getHeight() &&
+         Cand.SU->getDepth() == RemLat) ||
+        (Cand.SU->getHeight() < TryCand.SU->getHeight() &&
+         TryCand.SU->getDepth() == RemLat)));
+    if (SCHED0)
+      OtherSUOnCritPath =
+        (((TryCand.SU->getHeight() < Cand.SU->getHeight() &&
+           Cand.SU->getDepth() >= RemLat) ||
+          (Cand.SU->getHeight() < TryCand.SU->getHeight() &&
+           TryCand.SU->getDepth() >= RemLat)));
+    if (!OtherSUOnCritPath && !IsWideDAG &&
+        tryLess(TryCand.SU->getHeight(), Cand.SU->getHeight(),
+                TryCand, Cand, GenericSchedulerBase::BotHeightReduce)) {
+      return TryCand.Reason != NoCand;
+    }
+  }
+
+  if (!SCHED012()) {
+    // Weak edges are for clustering and other constraints.
+    if (tryLess(TryCand.SU->WeakSuccsLeft, Cand.SU->WeakSuccsLeft,
+                TryCand, Cand, Weak))
+      return TryCand.Reason != NoCand;
+  }
+  else if (!SCHED0 && !SCHED1) {
+    // Respect weak edges between candidates.
+    for (const SDep &Succ : Cand.SU->Succs)
+      if (Succ.getSUnit() == TryCand.SU) {
+        assert(Succ.isWeak());
+        TryCand.Reason = Weak;
+        return true;
+      }
+    for (const SDep &Succ : TryCand.SU->Succs)
+      if (Succ.getSUnit() == Cand.SU) {
+        assert(Succ.isWeak());
+        Cand.Reason = Weak;
+        return false;
+      }
+  }
+
+  // Fall through to original instruction order.
+  if (TryCand.SU->NodeNum > Cand.SU->NodeNum) {
+    TryCand.Reason = NodeOrder;
+    return true;
+  }
+
+    return false;
+}
+
+/// Post-RA scheduling ///
 
 #ifndef NDEBUG
 // Print the set of SUs

@@ -1,0 +1,53 @@
+# RUN: llc -o - %s -mtriple=s390x-linux-gnu -mcpu=z16 -verify-machineinstrs \
+# RUN:   -run-pass=machine-scheduler 2>&1 | FileCheck %s
+
+# The MVHI without register operand is scheduled below the 'MVHI %0'.
+# CHECK:      name: fun0
+# CHECK:      MVHI %0, 0, 0 :: (store (s32) into %ir.Arg, align 8)
+# CHECK-NEXT: MVHI $noreg, 0, 0 :: (store (s32) into `ptr null`, align 8)
+--- |
+  define void @fun0(ptr %Arg) { ret void }
+  define void @fun1(ptr %Arg) #0 {
+  %src = alloca i64
+  %dst = alloca i64
+  ret void
+  }
+...
+---
+name:            fun0
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r3d
+
+    %0:addr64bit = COPY $r3d
+    MVGHI $noreg, 0, 0 :: (store (s64) into `ptr null`)
+    MVHI $noreg, 0, 0 :: (store (s32) into `ptr null`, align 8)
+    MVHI %0, 0, 0 :: (store (s32) into %ir.Arg, align 8)
+    $r2d = LGHI 0
+    Return implicit killed $r2d
+...
+
+# The MVC should be scheduled early (above the LGHI) as it has no register
+# operands but still any other memory access chained above it.
+# CHECK:      name: fun1
+# CHECK:      MVC %stack.0, 0, 8, %stack.1, 0
+# CHECK-NEXT: $r2d = LGHI 0
+---
+name:            fun1
+tracksRegLiveness: true
+stack:
+  - { id: 0, size: 8}
+  - { id: 1, size: 8}
+body:             |
+  bb.0:
+    liveins: $r3d
+
+    %0:addr64bit = COPY $r3d
+    MVGHI %stack.0, 0, 0 :: (store (s64) into %ir.dst)
+    MVC %stack.0, 0, 8, %stack.1, 0 :: (store (s64) into %ir.dst), (load (s64) from %ir.src)
+    MVHI %0, 0, 0 :: (store (s32) into %ir.Arg, align 8)
+    $r2d = LGHI 0
+    Return implicit killed $r2d
+
+...
