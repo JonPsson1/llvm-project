@@ -45,8 +45,7 @@ define <4 x double> @fun3(<4 x float> %val1, <4 x float> %val2, <4 x double> %va
 ; CHECK-LABEL: fun3:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vfchsb %v0, %v24, %v26
-; CHECK-NEXT:    vmrlg %v1, %v0, %v0
-; CHECK-NEXT:    vuphf %v1, %v1
+; CHECK-NEXT:    vuplf %v1, %v0
 ; CHECK-NEXT:    vuphf %v0, %v0
 ; CHECK-NEXT:    vsel %v24, %v28, %v25, %v0
 ; CHECK-NEXT:    vsel %v26, %v30, %v27, %v1

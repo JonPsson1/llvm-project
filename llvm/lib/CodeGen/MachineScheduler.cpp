@@ -285,7 +285,7 @@ namespace {
 /// MachineScheduler runs after coalescing and before register allocation.
 class MachineSchedulerLegacy : public MachineFunctionPass {
   MachineSchedulerImpl Impl;
-  
+
 public:
   MachineSchedulerLegacy();
   void getAnalysisUsage(AnalysisUsage &AU) const override;
@@ -2615,7 +2615,7 @@ SchedBoundary::getNextResourceCycle(const MCSchedClassDesc *SC, unsigned PIdx,
 ///
 /// TODO: Also check whether the SU must start a new group.
 bool SchedBoundary::checkHazard(SUnit *SU) {
-  if (!InOrderHazardChecks)
+  if (!PreRAHazardChecks)
     return false; // Better to make SU available and reduce register pressure.
 
   if (HazardRec->isEnabled()
@@ -2854,7 +2854,7 @@ void SchedBoundary::bumpNode(SUnit *SU) {
   // exceed the issue width.
   const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
   unsigned IncMOps = SchedModel->getNumMicroOps(SU->getInstr());
-  assert((!InOrderHazardChecks ||
+  assert((!PreRAHazardChecks ||
           (CurrMOps == 0 ||
            (CurrMOps + IncMOps) <= SchedModel->getIssueWidth())) &&
          "Cannot schedule this instruction's MicroOps in the current cycle.");
@@ -3241,8 +3241,8 @@ const char *GenericSchedulerBase::getReasonStr(
   case RegCritical:    return "REG-CRIT  ";
   case Stall:          return "STALL     ";
   case Cluster:        return "CLUSTER   ";
-  case Weak:           return "WEAK      ";
   case CmpCC:          return "CMPCC    ";
+  case Weak:           return "WEAK      ";
   case RegMax:         return "REG-MAX   ";
   case ResourceReduce: return "RES-REDUCE";
   case ResourceDemand: return "RES-DEMAND";

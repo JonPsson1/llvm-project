@@ -166,7 +166,7 @@ define void @fun8(<2 x i64> %dwords, ptr %ptr) {
 ; Test that this results in vectorized conversions.
 define void @fun9(ptr %Src, ptr %ptr) {
 ; Z14-LABEL: fun9:
-; Z15:      vl	        %v0, 16(%r2), 4
+; Z14:       # %bb.0:
 ; Z14-NEXT:    stmg %r10, %r15, 80(%r15)
 ; Z14-NEXT:    .cfi_offset %r10, -80
 ; Z14-NEXT:    .cfi_offset %r11, -72
@@ -180,17 +180,15 @@ define void @fun9(ptr %Src, ptr %ptr) {
 ; Z14-NEXT:    std %f9, 0(%r15) # 8-byte Folded Spill
 ; Z14-NEXT:    .cfi_offset %f8, -168
 ; Z14-NEXT:    .cfi_offset %f9, -176
-; Z14-NEXT:    larl %r1, .LCPI9_0
 ; Z14-NEXT:    vl %v0, 16(%r2), 4
 ; Z14-NEXT:    vl %v1, 0(%r2), 4
-; Z14-NEXT:    vl %v2, 0(%r1), 3
-; Z14-NEXT:    vuplhh %v3, %v1
+; Z14-NEXT:    vuplhh %v2, %v1
+; Z14-NEXT:    vupllh %v1, %v1
 ; Z14-NEXT:    vuplhh %v0, %v0
-; Z14-NEXT:    vperm %v1, %v2, %v1, %v2
-; Z14-NEXT:    vlgvf %r0, %v3, 3
-; Z14-NEXT:    vlgvf %r1, %v3, 2
-; Z14-NEXT:    vlgvf %r2, %v3, 1
-; Z14-NEXT:    vlgvf %r4, %v3, 0
+; Z14-NEXT:    vlgvf %r0, %v2, 3
+; Z14-NEXT:    vlgvf %r1, %v2, 2
+; Z14-NEXT:    vlgvf %r2, %v2, 1
+; Z14-NEXT:    vlgvf %r4, %v2, 0
 ; Z14-NEXT:    celfbr %f2, 0, %r2, 0
 ; Z14-NEXT:    vlgvf %r5, %v1, 3
 ; Z14-NEXT:    celfbr %f3, 0, %r4, 0
@@ -225,17 +223,17 @@ define void @fun9(ptr %Src, ptr %ptr) {
 ;
 ; Z15-LABEL: fun9:
 ; Z15:       # %bb.0:
-; Z15-NEXT:    larl %r1, .LCPI9_0
+; Z15-NEXT:    vl %v0, 16(%r2), 4
 ; Z15-NEXT:    vl %v1, 0(%r2), 4
-; Z15-NEXT: vuplhh	%v2, %v1
-; Z15-NEXT: vupllh	%v1, %v1
+; Z15-NEXT:    vuplhh %v2, %v1
+; Z15-NEXT:    vupllh %v1, %v1
 ; Z15-NEXT:    vuplhh %v0, %v0
 ; Z15-NEXT:    vcelfb %v2, %v2, 0, 0
 ; Z15-NEXT:    vcelfb %v1, %v1, 0, 0
 ; Z15-NEXT:    vcelfb %v0, %v0, 0, 0
 ; Z15-NEXT:    vsteg %v0, 32(%r3), 0
-; Z15-NEXT: vst	%v1, 16(%r3), 4
-; Z15-NEXT: vst	%v2, 0(%r3), 4
+; Z15-NEXT:    vst %v1, 16(%r3), 4
+; Z15-NEXT:    vst %v2, 0(%r3), 4
 ; Z15-NEXT:    br %r14
 
  %Val = load <10 x i16>, ptr %Src

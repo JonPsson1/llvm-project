@@ -42,8 +42,8 @@ define <16 x i16> @fun3(<16 x i8> %val1, <16 x i8> %val2, <16 x i16> %val3, <16 
 ; CHECK-LABEL: fun3:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vceqb %v0, %v24, %v26
-; CHECK-NEXT:    vmrlg %v1, %v0, %v0
-; CHECK-DAG:     vuplb [[REG1:%v[0-9]+]], %v0
+; CHECK-NEXT:    vuplb %v1, %v0
+; CHECK-NEXT:    vuphb %v0, %v0
 ; CHECK-NEXT:    vsel %v24, %v28, %v25, %v0
 ; CHECK-NEXT:    vsel %v26, %v30, %v27, %v1
 ; CHECK-NEXT:    br %r14
@@ -127,8 +127,8 @@ define <8 x i32> @fun10(<8 x i16> %val1, <8 x i16> %val2, <8 x i32> %val3, <8 x 
 ; CHECK-LABEL: fun10:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vceqh %v0, %v24, %v26
-; CHECK-NEXT:    vmrlg %v1, %v0, %v0
-; CHECK-DAG:     vuplhw [[REG1:%v[0-9]+]], %v0
+; CHECK-NEXT:    vuplhw %v1, %v0
+; CHECK-NEXT:    vuphh %v0, %v0
 ; CHECK-NEXT:    vsel %v24, %v28, %v25, %v0
 ; CHECK-NEXT:    vsel %v26, %v30, %v27, %v1
 ; CHECK-NEXT:    br %r14
@@ -225,8 +225,8 @@ define <4 x i64> @fun18(<4 x i32> %val1, <4 x i32> %val2, <4 x i64> %val3, <4 x 
 ; CHECK-LABEL: fun18:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vceqf %v0, %v24, %v26
-; CHECK-NEXT:    vmrlg %v1, %v0, %v0
-; CHECK-DAG:     vuplf [[REG1]], %v0
+; CHECK-NEXT:    vuplf %v1, %v0
+; CHECK-NEXT:    vuphf %v0, %v0
 ; CHECK-NEXT:    vsel %v24, %v28, %v25, %v0
 ; CHECK-NEXT:    vsel %v26, %v30, %v27, %v1
 ; CHECK-NEXT:    br %r14
@@ -400,10 +400,10 @@ define <4 x double> @fun29(<4 x float> %val1, <4 x float> %val2, <4 x double> %v
 ; CHECK-NEXT:    vldeb %v2, %v2
 ; CHECK-NEXT:    vldeb %v1, %v1
 ; CHECK-NEXT:    vldeb %v3, %v3
-; CHECK-DAG:     vuplf [[REG1:%v[0-9]+]], [[REG0]]
+; CHECK-NEXT:    vfchdb %v0, %v2, %v0
+; CHECK-NEXT:    vfchdb %v1, %v3, %v1
 ; CHECK-NEXT:    vpkg %v0, %v1, %v0
-; CHECK-NEXT:    vmrlg %v1, %v0, %v0
-; CHECK-NEXT:    vuphf %v1, %v1
+; CHECK-NEXT:    vuplf %v1, %v0
 ; CHECK-NEXT:    vuphf %v0, %v0
 ; CHECK-NEXT:    vsel %v24, %v28, %v25, %v0
 ; CHECK-NEXT:    vsel %v26, %v30, %v27, %v1

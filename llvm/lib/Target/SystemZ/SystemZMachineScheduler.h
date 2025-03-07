@@ -30,72 +30,53 @@ namespace llvm {
 
 /// A MachineSchedStrategy implementation for SystemZ pre RA  scheduling.
 class SystemZPreRASchedStrategy : public GenericScheduler {
-  bool GenericSched;
-  unsigned NumScheduled;
-  unsigned DAGHeight;
-  unsigned DAGDepth;
-  bool IsWideDAG;                    // Many instructions in parallell.
   std::set<unsigned> PrioRegClasses; // The set of (FP) RCs that are prioritized.
-  std::set<Register> LiveRegs;       // Currently live registers.
-  std::set<Register> LiveIns;        // Registers live-in at the top of region.
-  // TODO: Turn these into SUnit flags?
-  std::vector<bool> IsRedefining;  // The defined reg (op0) is live prior to MI.
-  std::vector<bool> HasOnlyChainPreds; // No reg operands, but stores to memory.
-  unsigned ScheduledStoreDepth;
-  unsigned ScheduledStoreOpcode;
-  mutable std::set<const SUnit*> CurrentStores;
-  std::set<const SUnit*> StoresInBottom;
-  bool FirstBottomStoreScheduled;
-  int computeSULivenessScore(SchedCandidate &C, ScheduleDAGMILive *DAG,
-                             SchedBoundary *Zone) const;
+  void initializePrioRegClasses(const TargetRegisterInfo *);
   bool isPrioVirtReg(Register Reg, const MachineRegisterInfo *MRI) const {
     return (Reg.isVirtual() &&
             PrioRegClasses.count(MRI->getRegClass(Reg)->getID()));
   }
 
-  // First version 4ccf993
+  bool DoGenericSched;
+  unsigned NumLeft;
+  bool IsWideDAG;                        // Many instructions in parallell.
+  struct VRegSet : std::set<Register> {  // Currently live registers.
+    size_type count(Register Reg) const {
+      assert(Reg.isVirtual());
+      return std::set<Register>::count(Reg);
+    }
+  } LiveRegs;
+  std::vector<bool> IsRedefining;  // The defined reg (op0) is live prior to MI.
+  std::vector<bool> HasOnlyChainPreds; // No reg operands, but stores to memory.
+  mutable unsigned RemLat;
+  unsigned getRemLat(SchedBoundary *Zone) const;
+
+  std::set<const SUnit*> StoresGroup;
+  bool FirstStoreInGroupScheduled;
+  void initializeStoresGroup();
+
   std::map<SUnit*, SUnit*> Cmp2Src;
   SUnit *CmpSrcSU;
   unsigned CmpSrcPref;
-  bool CmpSrcNext;
+  void initializeCmpElim();
   bool checkCmpSrcForCmpElim(SUnit *CmpSU);
+  bool tryCmpElimOrdering(SchedCandidate &TryCand, SchedCandidate &Cand) const;
 
-  std::map<const SUnit *, const SUnit*> PREGSuccs;
+  std::map<const SUnit *, const SUnit*> PRegUse2DefDep;
   std::map<const SUnit *, std::vector<const SUnit*> > PRegUser2UsersGroup;
-  unsigned getPREGSuccsLeft(const SUnit *SU) const {
-    auto II = PREGSuccs.find(SU);
-    if (II == PREGSuccs.end())
-      return 0;
+  void initializePRegDeps();
+  bool hasPRegDepSuccessor(const SUnit *SU) const;
 
-    // auto GItr = PRegUser2UsersGroup.find(SU);
-    // unsigned GroupSize = (GItr != PRegUser2UsersGroup.end()) ? GItr->second.size() : 1;
-    //    dbgs() << "TRYPREGSSUCCS: GroupSize " << GroupSize;
-
-    const SUnit *PRegDefSU = II->second;
-    if (PRegDefSU->isScheduled) {
-      // dbgs() << " DEFSU Scheduled\n";
-      return 0;
-    }
-      
-    // XXX Useful (no change with '2')
-    auto Itr = PRegUser2UsersGroup.find(SU);
-    if (Itr != PRegUser2UsersGroup.end()) {
-      const std::vector<const SUnit*> &UserGroup = Itr->second;
-      for (auto *User : UserGroup)
-        if (User->isScheduled) {
-          // dbgs() << " OTHERUSER Scheduled\n";
-          return 0;
-        }
-    }
-
-    //dbgs() << " WAIT\n";
-    return 1;
+  int computeSULivenessScore(SchedCandidate &C, ScheduleDAGMILive *DAG,
+                             SchedBoundary *Zone) const;
+public:
+  SystemZPreRASchedStrategy(const MachineSchedContext *C) : GenericScheduler(C) {
+    initializePrioRegClasses(C->MF->getRegInfo().getTargetRegisterInfo());
   }
 
-public:
-  SystemZPreRASchedStrategy(const MachineSchedContext *C) :
-    GenericScheduler(C) {}
-
+  void initPolicy(MachineBasicBlock::iterator Begin,
+                  MachineBasicBlock::iterator End,
+                  unsigned NumRegionInstrs) override;
   void initialize(ScheduleDAGMI *dag) override;
   void schedNode(SUnit *SU, bool IsTopNode) override;
 

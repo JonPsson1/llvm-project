@@ -63,7 +63,7 @@ define <16 x i16> @fun3(<16 x i8> %val1, <16 x i8> %val2, <16 x i16> %val3, <16 
 ; CHECK-DAG:     vceqh [[REG4:%v[0-9]+]], %v30, %v27
 ; CHECK-DAG:     vl [[REG5:%v[0-9]+]], 176(%r15)
 ; CHECK-DAG:     vl [[REG6:%v[0-9]+]], 160(%r15)
-; CHECK-DAG:     vo [[REG7:%v[0-9]+]], {{%v[12]+}}, [[REG4]]
+; CHECK-DAG:     vo [[REG7:%v[0-9]+]], {{%v[012]+}}, [[REG4]]
 ; CHECK-DAG:     vo [[REG8:%v[0-9]+]], [[REG2]], [[REG3]]
 ; CHECK-DAG:     vsel %v24, %v29, [[REG6]], [[REG8]]
 ; CHECK-DAG:     vsel %v26, %v31, [[REG5]], [[REG7]]
@@ -806,9 +806,10 @@ define <4 x double> @fun34(<4 x double> %val1, <4 x double> %val2, <4 x float> %
 ; CHECK-DAG:     vldeb [[REG9:%v[0-9]+]], [[REG6]]
 ; CHECK-DAG:     vl [[REG8:%v[0-9]+]], 176(%r15)
 ; CHECK-DAG:     vl [[REG10:%v[0-9]+]], 160(%r15)
-; CHECK-NEXT:    vfchdb [[REG4:%v[0-9]+]], [[REG3]], [[REG2]]
+; CHECK-DAG:     vfchdb [[REG4:%v[0-9]+]], [[REG3]], [[REG2]]
 ; CHECK-DAG:     vfchdb [[REG11:%v[0-9]+]], [[REG9]], [[REG7]]
 ; CHECK-DAG:     vpkg [[REG12:%v[0-9]+]], [[REG11]], [[REG4]]
+; CHECK-DAG:     vuphf [[REG13:%v[0-9]+]], [[REG12]]
 ; CHECK-DAG:     vuplf [[REG14:%v[0-9]+]], [[REG12]]
 ; CHECK-DAG:     vfchdb [[REG15:%v[0-9]+]], %v24, %v28
 ; CHECK-DAG:     vfchdb [[REG16:%v[0-9]+]], %v26, %v30
@@ -821,16 +822,16 @@ define <4 x double> @fun34(<4 x double> %val1, <4 x double> %val2, <4 x float> %
 ; CHECK-Z14-LABEL: fun34:
 ; CHECK-Z14:       # %bb.0:
 ; CHECK-Z14-NEXT:    vfchsb %v0, %v25, %v27
-; CHECK-Z14-NEXT:    vl %v0, 176(%r15)
-; CHECK-Z14-NEXT:    vl %v1, 160(%r15)
-; CHECK-Z14-NEXT:    vfchdb %v2, %v24, %v28
-; CHECK-Z14-NEXT:    vfchdb %v3, %v26, %v30
-; CHECK-Z14-NEXT:    vuplf %v4, %v4
-; CHECK-Z14-DAG:     vuphf %v1, %v1
-; CHECK-Z14-NEXT:    vn %v1, %v3, %v1
+; CHECK-Z14-NEXT:    vfchdb %v1, %v24, %v28
+; CHECK-Z14-NEXT:    vfchdb %v2, %v26, %v30
+; CHECK-Z14-NEXT:    vl %v3, 176(%r15)
+; CHECK-Z14-NEXT:    vl %v4, 160(%r15)
+; CHECK-Z14-DAG:     vuphf %v5, %v0
+; CHECK-Z14-DAG:     vuplf %v0, %v0
 ; CHECK-Z14-NEXT:    vn %v0, %v2, %v0
-; CHECK-Z14-NEXT:    vsel %v24, %v29, %v5, %v0
-; CHECK-Z14-NEXT:    vsel %v26, %v31, %v4, %v1
+; CHECK-Z14-NEXT:    vn %v1, %v1, %v5
+; CHECK-Z14-NEXT:    vsel %v24, %v29, %v4, %v1
+; CHECK-Z14-NEXT:    vsel %v26, %v31, %v3, %v0
 ; CHECK-Z14-NEXT:    br %r14
   %cmp0 = fcmp ogt <4 x double> %val1, %val2
   %cmp1 = fcmp ogt <4 x float> %val3, %val4
