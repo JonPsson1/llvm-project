@@ -50,6 +50,11 @@ static cl::opt<bool> GENERICSCHED(
      cl::desc("Run the generic pre-ra scheduler instead of SystemZ "
               "heuristics."));
 
+static cl::opt<unsigned> TINYREGION(
+     "tiny-region", cl::Hidden, cl::init(0),
+     cl::desc("Run different pre-ra scheduler heuristics on regions of this "
+              "size or smaller."));
+
 void SystemZPreRASchedStrategy::
 initializePrioRegClasses(const TargetRegisterInfo *TRI_) {
   for (const TargetRegisterClass *RC : TRI_->regclasses()) {
@@ -386,6 +391,8 @@ computeSULivenessScore(SchedCandidate &C, ScheduleDAGMILive *DAG,
 bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
                                              SchedCandidate &TryCand,
                                              SchedBoundary *Zone) const {
+  bool TinyRegion = DAG->SUnits.size() <= TINYREGION;
+
   if (DoGenericSched)
     return GenericScheduler::tryCandidate(Cand, TryCand, Zone);
 
@@ -404,45 +411,54 @@ bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
 
   bool SkipPhysRegs = biasPhysRegExtra(TryCand.SU, TryCand.AtTop) &&
     biasPhysRegExtra(Cand.SU, TryCand.AtTop);
-  if (SkipPhysRegs) { // Both biased same way.  XXX worthwhile?  Whatif one long-latency...
+  if (SkipPhysRegs) {
+    // Both biased same way.  XXX worthwhile?  Whatif one long-latency...
     tryGreater(TryCand.SU->NodeNum, Cand.SU->NodeNum, TryCand, Cand,
                NodeOrder);
     return TryCand.Reason != NoCand;
   }
 
-  if (SCHEDCHAINPREDS)
-    if (tryGreater(HasOnlyChainPreds[TryCand.SU->NodeNum],
-                   HasOnlyChainPreds[Cand.SU->NodeNum],
-                   TryCand, Cand, ChainReduce))
+  if (TinyRegion) {
+    // TODO: Try this in bigger regions as well.
+    // Prioritize instructions that read unbuffered resources by stall cycles.
+    if (tryLess(Zone->getLatencyStallCycles(TryCand.SU),
+                Zone->getLatencyStallCycles(Cand.SU), TryCand, Cand, Stall))
+      return TryCand.Reason != NoCand;
+  } else {
+    if (SCHEDCHAINPREDS)
+      if (tryGreater(HasOnlyChainPreds[TryCand.SU->NodeNum],
+                     HasOnlyChainPreds[Cand.SU->NodeNum],
+                     TryCand, Cand, ChainReduce))
+        return TryCand.Reason != NoCand;
+
+    int TryCandScore = computeSULivenessScore(TryCand, DAG, Zone);
+    int CandScore = computeSULivenessScore(Cand, DAG, Zone);
+    if (tryLess(TryCandScore, CandScore, TryCand, Cand, LivenessReduce))
       return TryCand.Reason != NoCand;
 
-  int TryCandScore = computeSULivenessScore(TryCand, DAG, Zone);
-  int CandScore = computeSULivenessScore(Cand, DAG, Zone);
-  if (tryLess(TryCandScore, CandScore, TryCand, Cand, LivenessReduce))
-    return TryCand.Reason != NoCand;
-
-  if (SCHEDELIMCMP && tryCmpElimOrdering(TryCand, Cand))
-    return TryCand.Reason != NoCand;
-
-  if (SCHEDPREGCOPYS) {
-    // If a candidate is a user of a vreg that is defined by a copy from a
-    // preg, schedule it above some other node that is defining a vreg that
-    // will be copied to the same preg.
-    bool TryPRegDepSucc = hasPRegDepSuccessor(TryCand.SU);
-    bool PRegDepSucc = hasPRegDepSuccessor(Cand.SU);
-    if (tryLess(TryPRegDepSucc, PRegDepSucc, TryCand, Cand, Weak))
+    if (SCHEDELIMCMP && tryCmpElimOrdering(TryCand, Cand))
       return TryCand.Reason != NoCand;
-  }
 
-  if (!IsWideDAG && TryCand.SU->getHeight() != Cand.SU->getHeight() &&
-      (std::max(TryCand.SU->getHeight(), Cand.SU->getHeight()) >
-       Zone->getScheduledLatency())) {
-    unsigned HigherSUDepth = TryCand.SU->getHeight() < Cand.SU->getHeight() ?
-      Cand.SU->getDepth() : TryCand.SU->getDepth();
-    if (HigherSUDepth != getRemLat(Zone) &&
-        tryLess(TryCand.SU->getHeight(), Cand.SU->getHeight(),
-                TryCand, Cand, GenericSchedulerBase::BotHeightReduce)) {
-      return TryCand.Reason != NoCand;
+    if (SCHEDPREGCOPYS) {
+      // If a candidate is a user of a vreg that is defined by a copy from a
+      // preg, schedule it above some other node that is defining a vreg that
+      // will be copied to the same preg.
+      bool TryPRegDepSucc = hasPRegDepSuccessor(TryCand.SU);
+      bool PRegDepSucc = hasPRegDepSuccessor(Cand.SU);
+      if (tryLess(TryPRegDepSucc, PRegDepSucc, TryCand, Cand, Weak))
+        return TryCand.Reason != NoCand;
+    }
+
+    if (!IsWideDAG && TryCand.SU->getHeight() != Cand.SU->getHeight() &&
+        (std::max(TryCand.SU->getHeight(), Cand.SU->getHeight()) >
+         Zone->getScheduledLatency())) {
+      unsigned HigherSUDepth = TryCand.SU->getHeight() < Cand.SU->getHeight() ?
+        Cand.SU->getDepth() : TryCand.SU->getDepth();
+      if (HigherSUDepth != getRemLat(Zone) &&
+          tryLess(TryCand.SU->getHeight(), Cand.SU->getHeight(),
+                  TryCand, Cand, GenericSchedulerBase::BotHeightReduce)) {
+        return TryCand.Reason != NoCand;
+      }
     }
   }
 
