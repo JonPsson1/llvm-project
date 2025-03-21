@@ -550,7 +550,6 @@ bool MachineSchedulerLegacy::runOnMachineFunction(MachineFunction &MF) {
   if (skipFunction(MF.getFunction()))
     return false;
 
-return false;
   if (EnableMachineSched.getNumOccurrences()) {
     if (!EnableMachineSched)
       return false;
@@ -584,8 +583,6 @@ PostMachineSchedulerPass::~PostMachineSchedulerPass() = default;
 PreservedAnalyses
 MachineSchedulerPass::run(MachineFunction &MF,
                           MachineFunctionAnalysisManager &MFAM) {
-return PreservedAnalyses::all();
-
   if (EnableMachineSched.getNumOccurrences()) {
     if (!EnableMachineSched)
       return PreservedAnalyses::all();
