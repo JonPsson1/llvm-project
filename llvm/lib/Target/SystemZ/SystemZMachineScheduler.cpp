@@ -51,7 +51,7 @@ static cl::opt<bool> GENERICSCHED(
               "heuristics."));
 
 static cl::opt<unsigned> TINYREGION(
-     "tiny-region", cl::Hidden, cl::init(0),
+     "tiny-region", cl::Hidden, cl::init(10),
      cl::desc("Run different pre-ra scheduler heuristics on regions of this "
               "size or smaller."));
 
@@ -156,6 +156,63 @@ void SystemZPreRASchedStrategy::initialize(ScheduleDAGMI *dag) {
   if (DoGenericSched)
     return;
 
+  TinyRegion = DAG->SUnits.size() <= TINYREGION;
+  const SystemZInstrInfo *TII = static_cast<const SystemZInstrInfo *>(DAG->TII);
+  if (TinyRegion) {
+    const SUnit *CmpZeroSU = nullptr;
+    const SUnit *CmpSrcSU = nullptr;
+    Register CmpSrcReg = 0;
+    bool OtherCCClob = false;
+    unsigned MaxLat = 0;
+    std::set<Register> PRegs;
+    bool CopysPRegDep = false;
+    for (unsigned Idx = DAG->SUnits.size() - 1; Idx + 1 != 0; --Idx) {
+      const SUnit *SU = &DAG->SUnits[Idx];
+      const MachineInstr *MI = SU->getInstr();
+      if (TII->isCompareZero(*MI)) {
+        CmpZeroSU = SU;
+        CmpSrcReg = TII->getCompareSourceReg(*MI);
+        continue;
+      }
+      if (MI->getNumOperands()) {
+        const MachineOperand &DefMO = MI->getOperand(0);
+        if (DefMO.isReg() && DefMO.isDef() && DefMO.getReg().isVirtual()) {
+          if (DefMO.getReg() == CmpSrcReg &&
+              MI->getDesc().hasImplicitDefOfPhysReg(SystemZ::CC))
+            CmpSrcSU = SU;  // XXX Use data pred.
+        }
+      }
+      if (SU != CmpZeroSU && SU != CmpSrcSU &&
+          MI->getDesc().hasImplicitDefOfPhysReg(SystemZ::CC))
+        OtherCCClob = true;
+
+      MaxLat = std::max(MaxLat, unsigned(SU->Latency));
+
+      if (MI->isCopy()) {
+        Register DstReg = MI->getOperand(0).getReg();
+        Register SrcReg = MI->getOperand(1).getReg();
+        if (DstReg.isPhysical() && DAG->MRI.isAllocatable(DstReg) &&
+            SrcReg.isVirtual())
+          PRegs.insert(DstReg);
+        else if (SrcReg.isPhysical() && DAG->MRI.isAllocatable(SrcReg) &&
+                 DstReg.isVirtual()) {
+          if (!PRegs.insert(SrcReg).second)
+            CopysPRegDep = true;
+        }
+      }
+    }
+
+    bool CmpElimRegion = CmpZeroSU && CmpSrcSU && OtherCCClob;
+
+    // Use normal heuristics in case of any long latency instructions.
+    if (DAG->SUnits.size() > 6 && MaxLat >=6 &&
+        !CopysPRegDep &&
+        !CmpElimRegion)
+      TinyRegion = false;
+  }
+  if (TinyRegion)
+    return;
+
   NumLeft = DAG->SUnits.size();
   RemLat = ~0U;
 
@@ -235,7 +292,7 @@ static bool touchesCC(const MachineInstr *MI) {
 void SystemZPreRASchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   unsigned ExpectedLatencyIn = Bot.getExpectedLatency();
   GenericScheduler::schedNode(SU, IsTopNode);
-  if (DoGenericSched)
+  if (DoGenericSched || TinyRegion)
     return;
 
   LLVM_DEBUG( dbgs() << "Live regs was: ";
@@ -391,8 +448,6 @@ computeSULivenessScore(SchedCandidate &C, ScheduleDAGMILive *DAG,
 bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
                                              SchedCandidate &TryCand,
                                              SchedBoundary *Zone) const {
-  bool TinyRegion = DAG->SUnits.size() <= TINYREGION;
-
   if (DoGenericSched)
     return GenericScheduler::tryCandidate(Cand, TryCand, Zone);
 

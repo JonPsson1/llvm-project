@@ -44,9 +44,9 @@ define <2 x double> @constrained_vector_fdiv_v2f64() #0 {
 ; SZ13-LABEL: constrained_vector_fdiv_v2f64:
 ; SZ13:       # %bb.0: # %entry
 ; SZ13-NEXT:    larl %r1, .LCPI1_0
-; SZ13-NEXT:    larl %r2, .LCPI1_1
 ; SZ13-NEXT:    vl %v0, 0(%r1), 3
-; SZ13-NEXT:    vl %v1, 0(%r2), 3
+; SZ13-NEXT:    larl %r1, .LCPI1_1
+; SZ13-NEXT:    vl %v1, 0(%r1), 3
 ; SZ13-NEXT:    vfddb %v24, %v1, %v0
 ; SZ13-NEXT:    br %r14
 entry:
@@ -332,10 +332,10 @@ define <3 x float> @constrained_vector_frem_v3f32() #0 {
 ; SZ13-NEXT:    .cfi_def_cfa_offset 360
 ; SZ13-NEXT:    std %f8, 192(%r15) # 8-byte Folded Spill
 ; SZ13-NEXT:    .cfi_offset %f8, -168
-; SZ13-NEXT:    larl %r2, .LCPI7_1
 ; SZ13-NEXT:    larl %r1, .LCPI7_0
-; SZ13-NEXT:    lde %f8, 0(%r2)
 ; SZ13-NEXT:    lde %f0, 0(%r1)
+; SZ13-NEXT:    larl %r1, .LCPI7_1
+; SZ13-NEXT:    lde %f8, 0(%r1)
 ; SZ13-NEXT:    ldr %f2, %f8
 ; SZ13-NEXT:    brasl %r14, fmodf@PLT
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
@@ -598,9 +598,9 @@ define <2 x double> @constrained_vector_fmul_v2f64() #0 {
 ; SZ13-LABEL: constrained_vector_fmul_v2f64:
 ; SZ13:       # %bb.0: # %entry
 ; SZ13-NEXT:    larl %r1, .LCPI11_0
-; SZ13-NEXT:    larl %r2, .LCPI11_1
 ; SZ13-NEXT:    vl %v0, 0(%r1), 3
-; SZ13-NEXT:    vl %v1, 0(%r2), 3
+; SZ13-NEXT:    larl %r1, .LCPI11_1
+; SZ13-NEXT:    vl %v1, 0(%r1), 3
 ; SZ13-NEXT:    vfmdb %v24, %v1, %v0
 ; SZ13-NEXT:    br %r14
 entry:
@@ -770,9 +770,9 @@ define <2 x double> @constrained_vector_fadd_v2f64() #0 {
 ; SZ13-LABEL: constrained_vector_fadd_v2f64:
 ; SZ13:       # %bb.0: # %entry
 ; SZ13-NEXT:    larl %r1, .LCPI16_0
-; SZ13-NEXT:    larl %r2, .LCPI16_1
 ; SZ13-NEXT:    vl %v0, 0(%r1), 3
-; SZ13-NEXT:    vl %v1, 0(%r2), 3
+; SZ13-NEXT:    larl %r1, .LCPI16_1
+; SZ13-NEXT:    vl %v1, 0(%r1), 3
 ; SZ13-NEXT:    vfadb %v24, %v1, %v0
 ; SZ13-NEXT:    br %r14
 entry:
@@ -1228,9 +1228,9 @@ define <1 x float> @constrained_vector_pow_v1f32() #0 {
 ; SZ13-NEXT:    aghi %r15, -160
 ; SZ13-NEXT:    .cfi_def_cfa_offset 320
 ; SZ13-NEXT:    larl %r1, .LCPI30_0
-; SZ13-NEXT:    larl %r2, .LCPI30_1
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI30_1
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, powf@PLT
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vlr %v24, %v0
@@ -1284,10 +1284,10 @@ define <2 x double> @constrained_vector_pow_v2f64() #0 {
 ; SZ13-NEXT:    .cfi_def_cfa_offset 344
 ; SZ13-NEXT:    std %f8, 176(%r15) # 8-byte Folded Spill
 ; SZ13-NEXT:    .cfi_offset %f8, -168
-; SZ13-NEXT:    larl %r2, .LCPI31_1
 ; SZ13-NEXT:    larl %r1, .LCPI31_0
-; SZ13-NEXT:    ld %f8, 0(%r2)
 ; SZ13-NEXT:    ld %f0, 0(%r1)
+; SZ13-NEXT:    larl %r1, .LCPI31_1
+; SZ13-NEXT:    ld %f8, 0(%r1)
 ; SZ13-NEXT:    ldr %f2, %f8
 ; SZ13-NEXT:    brasl %r14, pow@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI31_2
@@ -1360,10 +1360,10 @@ define <3 x float> @constrained_vector_pow_v3f32() #0 {
 ; SZ13-NEXT:    .cfi_def_cfa_offset 360
 ; SZ13-NEXT:    std %f8, 192(%r15) # 8-byte Folded Spill
 ; SZ13-NEXT:    .cfi_offset %f8, -168
-; SZ13-NEXT:    larl %r2, .LCPI32_1
 ; SZ13-NEXT:    larl %r1, .LCPI32_0
-; SZ13-NEXT:    lde %f8, 0(%r2)
 ; SZ13-NEXT:    lde %f0, 0(%r1)
+; SZ13-NEXT:    larl %r1, .LCPI32_1
+; SZ13-NEXT:    lde %f8, 0(%r1)
 ; SZ13-NEXT:    ldr %f2, %f8
 ; SZ13-NEXT:    brasl %r14, powf@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI32_2
@@ -1452,10 +1452,10 @@ define void @constrained_vector_pow_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    .cfi_offset %f8, -168
 ; SZ13-NEXT:    .cfi_offset %f9, -176
 ; SZ13-NEXT:    larl %r1, .LCPI33_0
-; SZ13-NEXT:    ld %f8, 0(%r1)
+; SZ13-NEXT:    ld %f9, 0(%r1)
 ; SZ13-NEXT:    vl %v0, 0(%r2), 4
-; SZ13-NEXT:    ld %f9, 16(%r2)
-; SZ13-NEXT:    ldr %f2, %f8
+; SZ13-NEXT:    ld %f8, 16(%r2)
+; SZ13-NEXT:    ldr %f2, %f9
 ; SZ13-NEXT:    lgr %r13, %r2
 ; SZ13-NEXT:    vst %v0, 176(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d killed $v0
@@ -1463,7 +1463,7 @@ define void @constrained_vector_pow_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    vl %v0, 176(%r15), 3 # 16-byte Folded Reload
-; SZ13-NEXT:    ldr %f2, %f8
+; SZ13-NEXT:    ldr %f2, %f9
 ; SZ13-NEXT:    vrepg %v0, %v0, 1
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d killed $v0
 ; SZ13-NEXT:    brasl %r14, pow@PLT
@@ -1471,8 +1471,8 @@ define void @constrained_vector_pow_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vmrhg %v0, %v1, %v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
-; SZ13-NEXT:    ldr %f0, %f9
-; SZ13-NEXT:    ldr %f2, %f8
+; SZ13-NEXT:    ldr %f0, %f8
+; SZ13-NEXT:    ldr %f2, %f9
 ; SZ13-NEXT:    brasl %r14, pow@PLT
 ; SZ13-NEXT:    std %f0, 16(%r13)
 ; SZ13-NEXT:    vl %v0, 160(%r15), 3 # 16-byte Folded Reload
@@ -1551,10 +1551,10 @@ define <4 x double> @constrained_vector_pow_v4f64() #0 {
 ; SZ13-NEXT:    .cfi_def_cfa_offset 360
 ; SZ13-NEXT:    std %f8, 192(%r15) # 8-byte Folded Spill
 ; SZ13-NEXT:    .cfi_offset %f8, -168
-; SZ13-NEXT:    larl %r2, .LCPI34_1
 ; SZ13-NEXT:    larl %r1, .LCPI34_0
-; SZ13-NEXT:    ld %f8, 0(%r2)
 ; SZ13-NEXT:    ld %f0, 0(%r1)
+; SZ13-NEXT:    larl %r1, .LCPI34_1
+; SZ13-NEXT:    ld %f8, 0(%r1)
 ; SZ13-NEXT:    ldr %f2, %f8
 ; SZ13-NEXT:    brasl %r14, pow@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI34_2
@@ -4555,9 +4555,9 @@ define <1 x float> @constrained_vector_maxnum_v1f32() #0 {
 ; SZ13-NEXT:    aghi %r15, -160
 ; SZ13-NEXT:    .cfi_def_cfa_offset 320
 ; SZ13-NEXT:    larl %r1, .LCPI85_0
-; SZ13-NEXT:    larl %r2, .LCPI85_1
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI85_1
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmaxf@PLT
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vlr %v24, %v0
@@ -4605,16 +4605,16 @@ define <2 x double> @constrained_vector_maxnum_v2f64() #0 {
 ; SZ13-NEXT:    aghi %r15, -176
 ; SZ13-NEXT:    .cfi_def_cfa_offset 336
 ; SZ13-NEXT:    larl %r1, .LCPI86_0
-; SZ13-NEXT:    larl %r2, .LCPI86_1
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI86_1
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI86_2
-; SZ13-NEXT:    larl %r2, .LCPI86_3
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI86_3
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
@@ -4678,10 +4678,10 @@ define <3 x float> @constrained_vector_maxnum_v3f32() #0 {
 ; SZ13-NEXT:    .cfi_def_cfa_offset 360
 ; SZ13-NEXT:    std %f8, 192(%r15) # 8-byte Folded Spill
 ; SZ13-NEXT:    .cfi_offset %f8, -168
-; SZ13-NEXT:    larl %r2, .LCPI87_1
 ; SZ13-NEXT:    larl %r1, .LCPI87_0
-; SZ13-NEXT:    lde %f8, 0(%r2)
 ; SZ13-NEXT:    lde %f0, 0(%r1)
+; SZ13-NEXT:    larl %r1, .LCPI87_1
+; SZ13-NEXT:    lde %f8, 0(%r1)
 ; SZ13-NEXT:    ldr %f2, %f8
 ; SZ13-NEXT:    brasl %r14, fmaxf@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI87_2
@@ -4691,11 +4691,11 @@ define <3 x float> @constrained_vector_maxnum_v3f32() #0 {
 ; SZ13-NEXT:    ldr %f0, %f8
 ; SZ13-NEXT:    brasl %r14, fmaxf@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI87_3
-; SZ13-NEXT:    larl %r2, .LCPI87_4
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI87_4
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmaxf@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
@@ -4776,8 +4776,8 @@ define void @constrained_vector_log10_maxnum_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    larl %r1, .LCPI88_1
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
-; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    vl %v0, 176(%r15), 3 # 16-byte Folded Reload
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    vrepg %v0, %v0, 1
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d killed $v0
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
@@ -4862,32 +4862,32 @@ define <4 x double> @constrained_vector_maxnum_v4f64() #0 {
 ; SZ13-NEXT:    aghi %r15, -192
 ; SZ13-NEXT:    .cfi_def_cfa_offset 352
 ; SZ13-NEXT:    larl %r1, .LCPI89_0
-; SZ13-NEXT:    larl %r2, .LCPI89_1
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI89_1
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI89_2
-; SZ13-NEXT:    larl %r2, .LCPI89_3
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI89_3
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vmrhg %v0, %v0, %v1
 ; SZ13-NEXT:    larl %r1, .LCPI89_4
-; SZ13-NEXT:    larl %r2, .LCPI89_5
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI89_5
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI89_6
-; SZ13-NEXT:    larl %r2, .LCPI89_7
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 176(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI89_7
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmax@PLT
 ; SZ13-NEXT:    vl %v1, 176(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    vl %v24, 160(%r15), 3 # 16-byte Folded Reload
@@ -4929,9 +4929,9 @@ define <1 x float> @constrained_vector_minnum_v1f32() #0 {
 ; SZ13-NEXT:    aghi %r15, -160
 ; SZ13-NEXT:    .cfi_def_cfa_offset 320
 ; SZ13-NEXT:    larl %r1, .LCPI90_0
-; SZ13-NEXT:    larl %r2, .LCPI90_1
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI90_1
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fminf@PLT
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vlr %v24, %v0
@@ -4979,16 +4979,16 @@ define <2 x double> @constrained_vector_minnum_v2f64() #0 {
 ; SZ13-NEXT:    aghi %r15, -176
 ; SZ13-NEXT:    .cfi_def_cfa_offset 336
 ; SZ13-NEXT:    larl %r1, .LCPI91_0
-; SZ13-NEXT:    larl %r2, .LCPI91_1
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI91_1
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI91_2
-; SZ13-NEXT:    larl %r2, .LCPI91_3
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI91_3
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
@@ -5052,10 +5052,10 @@ define <3 x float> @constrained_vector_minnum_v3f32() #0 {
 ; SZ13-NEXT:    .cfi_def_cfa_offset 360
 ; SZ13-NEXT:    std %f8, 192(%r15) # 8-byte Folded Spill
 ; SZ13-NEXT:    .cfi_offset %f8, -168
-; SZ13-NEXT:    larl %r2, .LCPI92_1
 ; SZ13-NEXT:    larl %r1, .LCPI92_0
-; SZ13-NEXT:    lde %f8, 0(%r2)
 ; SZ13-NEXT:    lde %f0, 0(%r1)
+; SZ13-NEXT:    larl %r1, .LCPI92_1
+; SZ13-NEXT:    lde %f8, 0(%r1)
 ; SZ13-NEXT:    ldr %f2, %f8
 ; SZ13-NEXT:    brasl %r14, fminf@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI92_2
@@ -5065,11 +5065,11 @@ define <3 x float> @constrained_vector_minnum_v3f32() #0 {
 ; SZ13-NEXT:    ldr %f0, %f8
 ; SZ13-NEXT:    brasl %r14, fminf@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI92_3
-; SZ13-NEXT:    larl %r2, .LCPI92_4
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI92_4
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fminf@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
@@ -5144,10 +5144,10 @@ define void @constrained_vector_minnum_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    .cfi_offset %f8, -168
 ; SZ13-NEXT:    .cfi_offset %f9, -176
 ; SZ13-NEXT:    larl %r1, .LCPI93_0
-; SZ13-NEXT:    ld %f8, 0(%r1)
+; SZ13-NEXT:    ld %f9, 0(%r1)
 ; SZ13-NEXT:    vl %v0, 0(%r2), 4
-; SZ13-NEXT:    ld %f9, 16(%r2)
-; SZ13-NEXT:    ldr %f2, %f8
+; SZ13-NEXT:    ld %f8, 16(%r2)
+; SZ13-NEXT:    ldr %f2, %f9
 ; SZ13-NEXT:    lgr %r13, %r2
 ; SZ13-NEXT:    vst %v0, 176(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d killed $v0
@@ -5155,7 +5155,7 @@ define void @constrained_vector_minnum_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    vl %v0, 176(%r15), 3 # 16-byte Folded Reload
-; SZ13-NEXT:    ldr %f2, %f8
+; SZ13-NEXT:    ldr %f2, %f9
 ; SZ13-NEXT:    vrepg %v0, %v0, 1
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d killed $v0
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
@@ -5163,8 +5163,8 @@ define void @constrained_vector_minnum_v3f64(ptr %a) #0 {
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vmrhg %v0, %v1, %v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
-; SZ13-NEXT:    ldr %f0, %f9
-; SZ13-NEXT:    ldr %f2, %f8
+; SZ13-NEXT:    ldr %f0, %f8
+; SZ13-NEXT:    ldr %f2, %f9
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    std %f0, 16(%r13)
 ; SZ13-NEXT:    vl %v0, 160(%r15), 3 # 16-byte Folded Reload
@@ -5240,32 +5240,32 @@ define <4 x double> @constrained_vector_minnum_v4f64() #0 {
 ; SZ13-NEXT:    aghi %r15, -192
 ; SZ13-NEXT:    .cfi_def_cfa_offset 352
 ; SZ13-NEXT:    larl %r1, .LCPI94_0
-; SZ13-NEXT:    larl %r2, .LCPI94_1
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI94_1
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI94_2
-; SZ13-NEXT:    larl %r2, .LCPI94_3
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI94_3
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vmrhg %v0, %v0, %v1
 ; SZ13-NEXT:    larl %r1, .LCPI94_4
-; SZ13-NEXT:    larl %r2, .LCPI94_5
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI94_5
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI94_6
-; SZ13-NEXT:    larl %r2, .LCPI94_7
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 176(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI94_7
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, fmin@PLT
 ; SZ13-NEXT:    vl %v1, 176(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    vl %v24, 160(%r15), 3 # 16-byte Folded Reload
@@ -5451,9 +5451,9 @@ define <2 x double> @constrained_vector_fpext_v2f32() #0 {
 ; SZ13-LABEL: constrained_vector_fpext_v2f32:
 ; SZ13:       # %bb.0: # %entry
 ; SZ13-NEXT:    larl %r1, .LCPI100_0
-; SZ13-NEXT:    larl %r2, .LCPI100_1
 ; SZ13-NEXT:    ldeb %f0, 0(%r1)
-; SZ13-NEXT:    ldeb %f1, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI100_1
+; SZ13-NEXT:    ldeb %f1, 0(%r1)
 ; SZ13-NEXT:    vmrhg %v24, %v1, %v0
 ; SZ13-NEXT:    br %r14
 entry:
@@ -6736,9 +6736,9 @@ define <1 x float> @constrained_vector_atan2_v1f32() #0 {
 ; SZ13-NEXT:    aghi %r15, -160
 ; SZ13-NEXT:    .cfi_def_cfa_offset 320
 ; SZ13-NEXT:    larl %r1, .LCPI128_0
-; SZ13-NEXT:    larl %r2, .LCPI128_1
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI128_1
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2f@PLT
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vlr %v24, %v0
@@ -6788,16 +6788,16 @@ define <2 x double> @constrained_vector_atan2_v2f64() #0 {
 ; SZ13-NEXT:    aghi %r15, -176
 ; SZ13-NEXT:    .cfi_def_cfa_offset 336
 ; SZ13-NEXT:    larl %r1, .LCPI129_0
-; SZ13-NEXT:    larl %r2, .LCPI129_1
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI129_1
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI129_2
-; SZ13-NEXT:    larl %r2, .LCPI129_3
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI129_3
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
@@ -6859,23 +6859,23 @@ define <3 x float> @constrained_vector_atan2_v3f32() #0 {
 ; SZ13-NEXT:    aghi %r15, -192
 ; SZ13-NEXT:    .cfi_def_cfa_offset 352
 ; SZ13-NEXT:    larl %r1, .LCPI130_0
-; SZ13-NEXT:    larl %r2, .LCPI130_1
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI130_1
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2f@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI130_2
-; SZ13-NEXT:    larl %r2, .LCPI130_3
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vst %v0, 176(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI130_3
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2f@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI130_4
-; SZ13-NEXT:    larl %r2, .LCPI130_5
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    lde %f0, 0(%r1)
-; SZ13-NEXT:    lde %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI130_5
+; SZ13-NEXT:    lde %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2f@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0s killed $f0s def $v0
@@ -7054,32 +7054,32 @@ define <4 x double> @constrained_vector_atan2_v4f64() #0 {
 ; SZ13-NEXT:    aghi %r15, -192
 ; SZ13-NEXT:    .cfi_def_cfa_offset 352
 ; SZ13-NEXT:    larl %r1, .LCPI132_0
-; SZ13-NEXT:    larl %r2, .LCPI132_1
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI132_1
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI132_2
-; SZ13-NEXT:    larl %r2, .LCPI132_3
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI132_3
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2@PLT
 ; SZ13-NEXT:    vl %v1, 160(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vmrhg %v0, %v0, %v1
 ; SZ13-NEXT:    larl %r1, .LCPI132_4
-; SZ13-NEXT:    larl %r2, .LCPI132_5
 ; SZ13-NEXT:    vst %v0, 160(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI132_5
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2@PLT
 ; SZ13-NEXT:    larl %r1, .LCPI132_6
-; SZ13-NEXT:    larl %r2, .LCPI132_7
 ; SZ13-NEXT:    # kill: def $f0d killed $f0d def $v0
 ; SZ13-NEXT:    vst %v0, 176(%r15), 3 # 16-byte Folded Spill
 ; SZ13-NEXT:    ld %f0, 0(%r1)
-; SZ13-NEXT:    ld %f2, 0(%r2)
+; SZ13-NEXT:    larl %r1, .LCPI132_7
+; SZ13-NEXT:    ld %f2, 0(%r1)
 ; SZ13-NEXT:    brasl %r14, atan2@PLT
 ; SZ13-NEXT:    vl %v1, 176(%r15), 3 # 16-byte Folded Reload
 ; SZ13-NEXT:    vl %v24, 160(%r15), 3 # 16-byte Folded Reload

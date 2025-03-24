@@ -328,9 +328,9 @@ define i128 @f25(i1 %a) {
 ; CHECK-LABEL: f25:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    larl %r1, .LCPI24_0
-; CHECK-NEXT:    vl %v0, 0(%r1), 3
-; CHECK-NEXT:    vlvgp %v1, %r3, %r3
-; CHECK-NEXT:    vn %v0, %v1, %v0
+; CHECK-NEXT:    vl %v1, 0(%r1), 3
+; CHECK-NEXT:    vlvgp %v0, %r3, %r3
+; CHECK-NEXT:    vn %v0, %v0, %v1
 ; CHECK-NEXT:    vlcq %v0, %v0
 ; CHECK-NEXT:    vst %v0, 0(%r2), 3
 ; CHECK-NEXT:    br %r14
@@ -360,9 +360,9 @@ define i128 @f27(i1 %a) {
 ; CHECK-LABEL: f27:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    larl %r1, .LCPI26_0
-; CHECK-NEXT:    vl %v0, 0(%r1), 3
-; CHECK-NEXT:    vlvgp %v1, %r3, %r3
-; CHECK-NEXT:    vn %v0, %v1, %v0
+; CHECK-NEXT:    vl %v1, 0(%r1), 3
+; CHECK-NEXT:    vlvgp %v0, %r3, %r3
+; CHECK-NEXT:    vn %v0, %v0, %v1
 ; CHECK-NEXT:    vst %v0, 0(%r2), 3
 ; CHECK-NEXT:    br %r14
   %res = zext i1 %a to i128

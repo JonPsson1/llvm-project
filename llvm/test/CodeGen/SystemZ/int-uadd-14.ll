@@ -28,12 +28,12 @@ define zeroext i1 @f1(i256 %a, i256 %b, ptr %res) {
 define zeroext i1 @f2(i256 %a, i256 %b) {
 ; CHECK-LABEL: f2:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    vl %v0, 16(%r3), 3
-; CHECK-NEXT:    vl %v1, 16(%r2), 3
-; CHECK-NEXT:    vl %v2, 0(%r3), 3
-; CHECK-NEXT:    vl %v3, 0(%r2), 3
-; CHECK-NEXT:    vaccq %v0, %v1, %v0
-; CHECK-NEXT:    vacccq %v0, %v3, %v2, %v0
+; CHECK-NEXT:    vl %v2, 16(%r3), 3
+; CHECK-NEXT:    vl %v3, 16(%r2), 3
+; CHECK-NEXT:    vl %v0, 0(%r3), 3
+; CHECK-NEXT:    vl %v1, 0(%r2), 3
+; CHECK-NEXT:    vaccq %v2, %v3, %v2
+; CHECK-NEXT:    vacccq %v0, %v1, %v0, %v2
 ; CHECK-NEXT:    vlgvg %r2, %v0, 1
 ; CHECK-NEXT:    br %r14
   %t = call {i256, i1} @llvm.uadd.with.overflow.i256(i256 %a, i256 %b)

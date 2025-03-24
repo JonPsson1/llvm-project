@@ -7,9 +7,9 @@
 define i256 @f1(i256 %a, i256 %sh) {
 ; CHECK-LABEL: f1:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    l %r0, 28(%r4)
 ; CHECK-NEXT:    vl %v1, 16(%r3), 3
 ; CHECK-NEXT:    vl %v0, 0(%r3), 3
+; CHECK-NEXT:    l %r0, 28(%r4)
 ; CHECK-NEXT:    clijhe %r0, 128, .LBB0_2
 ; CHECK-NEXT:  # %bb.1:
 ; CHECK-NEXT:    lr %r1, %r0
@@ -51,9 +51,9 @@ define i256 @f1(i256 %a, i256 %sh) {
 define i256 @f2(i256 %a, i256 %sh) {
 ; CHECK-LABEL: f2:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    l %r0, 28(%r4)
 ; CHECK-NEXT:    vl %v1, 0(%r3), 3
 ; CHECK-NEXT:    vl %v0, 16(%r3), 3
+; CHECK-NEXT:    l %r0, 28(%r4)
 ; CHECK-NEXT:    clijhe %r0, 128, .LBB1_2
 ; CHECK-NEXT:  # %bb.1:
 ; CHECK-NEXT:    lr %r1, %r0
@@ -95,8 +95,8 @@ define i256 @f2(i256 %a, i256 %sh) {
 define i256 @f3(i256 %a, i256 %sh) {
 ; CHECK-LABEL: f3:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    l %r0, 28(%r4)
 ; CHECK-NEXT:    vl %v0, 16(%r3), 3
+; CHECK-NEXT:    l %r0, 28(%r4)
 ; CHECK-NEXT:    vl %v1, 0(%r3), 3
 ; CHECK-NEXT:    clijhe %r0, 128, .LBB2_2
 ; CHECK-NEXT:  # %bb.1:
@@ -113,24 +113,24 @@ define i256 @f3(i256 %a, i256 %sh) {
 ; CHECK-NEXT:    vsrab %v1, %v1, %v2
 ; CHECK-NEXT:    vsrl %v5, %v5, %v2
 ; CHECK-NEXT:    vsl %v3, %v4, %v3
-; CHECK-NEXT:    vsra %v1, %v1, %v2
-; CHECK-NEXT:    vo %v2, %v3, %v5
+; CHECK-NEXT:    vsra %v2, %v1, %v2
+; CHECK-NEXT:    vo %v1, %v3, %v5
 ; CHECK-NEXT:    cijlh %r0, 0, .LBB2_3
 ; CHECK-NEXT:    j .LBB2_4
 ; CHECK-NEXT:  .LBB2_2:
+; CHECK-NEXT:    vrepib %v2, 127
+; CHECK-NEXT:    vsrab %v3, %v1, %v2
 ; CHECK-NEXT:    ahik %r1, %r0, -128
-; CHECK-NEXT:    vlvgp %v2, %r1, %r1
-; CHECK-NEXT:    vrepib %v3, 127
-; CHECK-NEXT:    vrepb %v2, %v2, 15
-; CHECK-NEXT:    vsrab %v4, %v1, %v3
-; CHECK-NEXT:    vsrab %v5, %v1, %v2
-; CHECK-NEXT:    vsra %v1, %v4, %v3
-; CHECK-NEXT:    vsra %v2, %v5, %v2
+; CHECK-NEXT:    vsra %v2, %v3, %v2
+; CHECK-NEXT:    vlvgp %v3, %r1, %r1
+; CHECK-NEXT:    vrepb %v3, %v3, 15
+; CHECK-NEXT:    vsrab %v1, %v1, %v3
+; CHECK-NEXT:    vsra %v1, %v1, %v3
 ; CHECK-NEXT:    cije %r0, 0, .LBB2_4
 ; CHECK-NEXT:  .LBB2_3:
-; CHECK-NEXT:    vlr %v0, %v2
+; CHECK-NEXT:    vlr %v0, %v1
 ; CHECK-NEXT:  .LBB2_4:
-; CHECK-NEXT:    vst %v1, 0(%r2), 3
+; CHECK-NEXT:    vst %v2, 0(%r2), 3
 ; CHECK-NEXT:    vst %v0, 16(%r2), 3
 ; CHECK-NEXT:    br %r14
   %res = ashr i256 %a, %sh
