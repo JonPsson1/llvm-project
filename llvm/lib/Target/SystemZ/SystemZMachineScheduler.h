@@ -37,7 +37,6 @@ class SystemZPreRASchedStrategy : public GenericScheduler {
             PrioRegClasses.count(MRI->getRegClass(Reg)->getID()));
   }
 
-  bool TinyRegion;
   bool DoGenericSched;
   unsigned NumLeft;
   bool IsWideDAG;                        // Many instructions in parallell.
