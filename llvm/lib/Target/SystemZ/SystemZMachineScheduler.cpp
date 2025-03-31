@@ -29,7 +29,7 @@ using namespace llvm;
 
 /// Pre-RA scheduling ///
 
-static cl::opt<bool> SCHEDCHAINPREDS("sched-chainpreds", cl::Hidden, cl::init(true));
+static cl::opt<bool> SCHEDCHAINPREDS("sched-chainpreds", cl::Hidden, cl::init(false));
 
 static cl::opt<bool> SCHEDELIMCMP("sched-elimcmp", cl::Hidden, cl::init(false));
 
@@ -150,7 +150,7 @@ void SystemZPreRASchedStrategy::initPolicy(MachineBasicBlock::iterator Begin,
 }
 
 void SystemZPreRASchedStrategy::initialize(ScheduleDAGMI *dag) {
-  Bot.PreRAHazardChecks = DoGenericSched;
+  Bot.PreRAHazardChecks = true; // DoGenericSched;
 
   GenericScheduler::initialize(dag);
   if (DoGenericSched)
