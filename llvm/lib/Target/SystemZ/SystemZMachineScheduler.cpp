@@ -255,6 +255,8 @@ static int biasPhysRegExtra(const SUnit *SU) {
          isPhysRegDef(MI->getOperand(0));
 }
 
+static cl::opt<bool> ReduceLiveness("reduce-liveness", cl::Hidden, cl::init(true));
+
 bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
                                              SchedCandidate &TryCand,
                                              SchedBoundary *Zone) const {
@@ -310,22 +312,24 @@ bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
     return false;
   };
 
-  bool PreservesSchedLat_Cand =
+  if (ReduceLiveness) {
+    bool PreservesSchedLat_Cand =
       Cand.SU->getHeight() <= Zone->getScheduledLatency();
-  bool SchedLow_Cand = PreservesSchedLat_Cand && isSchedLow(Cand.SU);
-  bool SchedHigh_Cand = isSchedHigh(Cand.SU);
-  bool PreservesSchedLat_TryC =
+    bool SchedLow_Cand = PreservesSchedLat_Cand && isSchedLow(Cand.SU);
+    bool SchedHigh_Cand = isSchedHigh(Cand.SU);
+    bool PreservesSchedLat_TryC =
       TryCand.SU->getHeight() <= Zone->getScheduledLatency();
-  bool SchedLow_TryC = PreservesSchedLat_TryC && isSchedLow(TryCand.SU);
-  bool SchedHigh_TryC = isSchedHigh(TryCand.SU);
+    bool SchedLow_TryC = PreservesSchedLat_TryC && isSchedLow(TryCand.SU);
+    bool SchedHigh_TryC = isSchedHigh(TryCand.SU);
 
-  // One of the SUs is a store that opens a live range.
-  if (tryLess(SchedHigh_TryC, SchedHigh_Cand, TryCand, Cand, RegExcess))
-    return TryCand.Reason != NoCand;
+    // One of the SUs is a store that opens a live range.
+    if (tryLess(SchedHigh_TryC, SchedHigh_Cand, TryCand, Cand, RegExcess))
+      return TryCand.Reason != NoCand;
 
-  // One of the SUs closes a live range and preserves the scheduled latency.
-  if (tryGreater(SchedLow_TryC, SchedLow_Cand, TryCand, Cand, RegExcess))
-    return TryCand.Reason != NoCand;
+    // One of the SUs closes a live range and preserves the scheduled latency.
+    if (tryGreater(SchedLow_TryC, SchedLow_Cand, TryCand, Cand, RegExcess))
+      return TryCand.Reason != NoCand;
+  }
 
   // One or both SUs increase the scheduled latency.
   if (shouldReallyReduceLatency()) {
@@ -383,8 +387,8 @@ void SystemZPreRASchedStrategy::initialize(ScheduleDAGMI *dag) {
              else dbgs() << "No StoresGroup.\n";);
 
   initializeLatencyReduction();
-  LLVM_DEBUG(dbgs() << "Latency scheduling " << (HasDataSequences ? "" : "not ")
-                    << "enabled for data sequences.\n";);
+  // LLVM_DEBUG(dbgs() << "Latency scheduling " << (HasDataSequences ? "" : "not ")
+  //                   << "enabled for data sequences.\n";);
 }
 
 void SystemZPreRASchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
