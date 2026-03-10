@@ -1227,7 +1227,7 @@ protected:
   void traceCandidate(const SchedCandidate &Cand);
 #endif
 
-private:
+protected:
   bool shouldReduceLatency(const CandPolicy &Policy, SchedBoundary &CurrZone,
                            bool ComputeRemLatency, unsigned &RemLatency) const;
 };

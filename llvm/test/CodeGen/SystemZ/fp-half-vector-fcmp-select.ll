@@ -39,44 +39,44 @@ define void @fun0(ptr %Src, ptr %Dst) {
 ; CHECK-NEXT:    .cfi_offset %f14, -216
 ; CHECK-NEXT:    .cfi_offset %f15, -224
 ; CHECK-NEXT:    lgh %r0, 14(%r2)
+; CHECK-NEXT:    lgh %r4, 30(%r2)
 ; CHECK-NEXT:    stg %r0, 200(%r15) # 8-byte Spill
 ; CHECK-NEXT:    lgh %r0, 12(%r2)
+; CHECK-NEXT:    stg %r4, 192(%r15) # 8-byte Spill
+; CHECK-NEXT:    lgh %r4, 28(%r2)
 ; CHECK-NEXT:    stg %r0, 160(%r15) # 8-byte Spill
 ; CHECK-NEXT:    lgh %r0, 6(%r2)
-; CHECK-NEXT:    sllg %r12, %r0, 48
-; CHECK-NEXT:    lgh %r0, 4(%r2)
-; CHECK-NEXT:    sllg %r0, %r0, 48
-; CHECK-NEXT:    ldgr %f10, %r0
-; CHECK-NEXT:    lgh %r0, 2(%r2)
-; CHECK-NEXT:    sllg %r0, %r0, 48
-; CHECK-NEXT:    ldgr %f9, %r0
-; CHECK-NEXT:    lgh %r0, 0(%r2)
-; CHECK-NEXT:    sllg %r0, %r0, 48
-; CHECK-NEXT:    ldgr %f12, %r0
-; CHECK-NEXT:    lgh %r0, 30(%r2)
-; CHECK-NEXT:    stg %r0, 192(%r15) # 8-byte Spill
-; CHECK-NEXT:    lgh %r0, 28(%r2)
-; CHECK-NEXT:    stg %r0, 184(%r15) # 8-byte Spill
-; CHECK-NEXT:    lgh %r0, 22(%r2)
-; CHECK-NEXT:    sllg %r10, %r0, 48
-; CHECK-NEXT:    lgh %r0, 20(%r2)
-; CHECK-NEXT:    sllg %r0, %r0, 48
-; CHECK-NEXT:    ldgr %f13, %r0
-; CHECK-NEXT:    lgh %r0, 18(%r2)
-; CHECK-NEXT:    sllg %r0, %r0, 48
-; CHECK-NEXT:    ldgr %f8, %r0
-; CHECK-NEXT:    lgh %r0, 16(%r2)
+; CHECK-NEXT:    stg %r4, 184(%r15) # 8-byte Spill
+; CHECK-NEXT:    lgh %r4, 22(%r2)
+; CHECK-NEXT:    lgr %r13, %r3
 ; CHECK-NEXT:    lgh %r8, 10(%r2)
 ; CHECK-NEXT:    lgh %r6, 8(%r2)
+; CHECK-NEXT:    sllg %r12, %r0, 48
+; CHECK-NEXT:    lgh %r0, 4(%r2)
+; CHECK-NEXT:    lgh %r1, 2(%r2)
+; CHECK-NEXT:    lgh %r3, 0(%r2)
 ; CHECK-NEXT:    lgh %r7, 26(%r2)
 ; CHECK-NEXT:    lgh %r11, 24(%r2)
+; CHECK-NEXT:    sllg %r10, %r4, 48
+; CHECK-NEXT:    lgh %r4, 20(%r2)
+; CHECK-NEXT:    lgh %r5, 18(%r2)
+; CHECK-NEXT:    lgh %r2, 16(%r2)
 ; CHECK-NEXT:    sllg %r0, %r0, 48
-; CHECK-NEXT:    lgr %r13, %r3
-; CHECK-NEXT:    ldgr %f0, %r0
+; CHECK-NEXT:    sllg %r1, %r1, 48
+; CHECK-NEXT:    sllg %r3, %r3, 48
+; CHECK-NEXT:    sllg %r4, %r4, 48
+; CHECK-NEXT:    sllg %r5, %r5, 48
+; CHECK-NEXT:    sllg %r2, %r2, 48
+; CHECK-NEXT:    ldgr %f0, %r2
 ; CHECK-NEXT:    # kill: def $f0h killed $f0h killed $f0d
+; CHECK-NEXT:    ldgr %f10, %r0
+; CHECK-NEXT:    ldgr %f9, %r1
+; CHECK-NEXT:    ldgr %f13, %r3
+; CHECK-NEXT:    ldgr %f8, %r4
+; CHECK-NEXT:    ldgr %f12, %r5
 ; CHECK-NEXT:    brasl %r14, __extendhfsf2@PLT
 ; CHECK-NEXT:    ler %f11, %f0
-; CHECK-NEXT:    ler %f0, %f12
+; CHECK-NEXT:    ler %f0, %f13
 ; CHECK-NEXT:    brasl %r14, __extendhfsf2@PLT
 ; CHECK-NEXT:    cebr %f0, %f11
 ; CHECK-NEXT:    je .LBB0_2
@@ -90,15 +90,15 @@ define void @fun0(ptr %Src, ptr %Dst) {
 ; CHECK-NEXT:    brasl %r14, __truncsfhf2@PLT
 ; CHECK-NEXT:    # kill: def $f0h killed $f0h def $f0d
 ; CHECK-NEXT:    std %f0, 176(%r15) # 8-byte Spill
-; CHECK-NEXT:    ler %f0, %f8
+; CHECK-NEXT:    ler %f0, %f12
 ; CHECK-NEXT:    brasl %r14, __extendhfsf2@PLT
-; CHECK-NEXT:    ler %f8, %f0
+; CHECK-NEXT:    ler %f12, %f0
 ; CHECK-NEXT:    ler %f0, %f9
 ; CHECK-NEXT:    brasl %r14, __extendhfsf2@PLT
-; CHECK-NEXT:    cebr %f0, %f8
+; CHECK-NEXT:    cebr %f0, %f12
 ; CHECK-NEXT:    je .LBB0_4
 ; CHECK-NEXT:  # %bb.3:
-; CHECK-NEXT:    ler %f0, %f8
+; CHECK-NEXT:    ler %f0, %f12
 ; CHECK-NEXT:  .LBB0_4:
 ; CHECK-NEXT:    sllg %r11, %r8, 48
 ; CHECK-NEXT:    sllg %r8, %r7, 48
@@ -107,7 +107,7 @@ define void @fun0(ptr %Src, ptr %Dst) {
 ; CHECK-NEXT:    brasl %r14, __truncsfhf2@PLT
 ; CHECK-NEXT:    # kill: def $f0h killed $f0h def $f0d
 ; CHECK-NEXT:    std %f0, 168(%r15) # 8-byte Spill
-; CHECK-NEXT:    ler %f0, %f13
+; CHECK-NEXT:    ler %f0, %f8
 ; CHECK-NEXT:    brasl %r14, __extendhfsf2@PLT
 ; CHECK-NEXT:    ler %f8, %f0
 ; CHECK-NEXT:    ler %f0, %f10
