@@ -256,7 +256,7 @@ static int biasPhysRegExtra(const SUnit *SU) {
 }
 
 static cl::opt<bool> ReduceLiveness("reduce-liveness", cl::Hidden, cl::init(true));
-
+static cl::opt<bool> STORESGROUPS("stores-groups", cl::Hidden, cl::init(true));
 bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
                                              SchedCandidate &TryCand,
                                              SchedBoundary *Zone) const {
@@ -323,7 +323,7 @@ bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
     bool SchedHigh_TryC = isSchedHigh(TryCand.SU);
 
     // One of the SUs is a store that opens a live range.
-    if (tryLess(SchedHigh_TryC, SchedHigh_Cand, TryCand, Cand, RegExcess))
+    if (STORESGROUPS && tryLess(SchedHigh_TryC, SchedHigh_Cand, TryCand, Cand, RegExcess))
       return TryCand.Reason != NoCand;
 
     // One of the SUs closes a live range and preserves the scheduled latency.
