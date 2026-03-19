@@ -27,7 +27,7 @@ enum LatencyReduction { Always, Never, More, Heuristics, CycleBased };
 static cl::opt<SystemZSched::LatencyReduction> PreRALatRed(
     "prera-lat-red", cl::Hidden,
     cl::desc("Tuning of latency reduction during pre-ra mi-scheduling."),
-    cl::init(SystemZSched::LatencyReduction::Heuristics),
+    cl::init(SystemZSched::LatencyReduction::More),
     cl::values(
         clEnumValN(SystemZSched::LatencyReduction::Always, "always",
                    "Reduce scheduled latency always."),
@@ -256,7 +256,7 @@ static int biasPhysRegExtra(const SUnit *SU) {
 }
 
 static cl::opt<bool> ReduceLiveness("reduce-liveness", cl::Hidden, cl::init(true));
-static cl::opt<bool> STORESGROUPS("stores-groups", cl::Hidden, cl::init(true));
+static cl::opt<bool> STORESGROUPS("stores-groups", cl::Hidden, cl::init(false));
 bool SystemZPreRASchedStrategy::tryCandidate(SchedCandidate &Cand,
                                              SchedCandidate &TryCand,
                                              SchedBoundary *Zone) const {
